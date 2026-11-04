@@ -946,6 +946,11 @@ static int shader_translate(ShaderEntry *e, const UsseProgram *prog, const UsseV
 	usse_spirv_set_pcf(-1, 0); usse_spirv_set_points(0); usse_spirv_set_probe_off(0); usse_spirv_set_fetch_zero(0); usse_spirv_set_motion(0);
 	uint64_t tb1 = us_now(); t_shader_xlate += tb1 - tb0;
 	if (!m.ok) { fprintf(stderr, "    gpu: %#x: %s\n", e->addr, m.err); usse_spirv_free(&m); return 0; }
+	{	/* RECOMP_SPIRV_DUMP=<folder>: every module this renderer translates, for spirv-val (as gfx_coverage.c's for the gate) */
+		static const char *dir = (const char *)1; if (dir == (const char *)1) dir = getenv("RECOMP_SPIRV_DUMP");
+		if (dir) { char path[512]; snprintf(path, sizeof path, "%s/%08x_%08x_%s.spv", dir, e->addr, (uint32_t)hash_bytes(m.words, 4 * (size_t)m.nwords), usse_is_fragment(prog) ? "frag" : "vert");
+		           FILE *f = fopen(path, "wb"); if (f) { fwrite(m.words, 4, m.nwords, f); fclose(f); } }
+	}
 	int is_frag = usse_is_fragment(prog);
 	e->fetch = m.frag_fetch; e->nldst = m.nldst_sa; e->pa_words = m.pa_words; memcpy(e->ldst_sa, m.ldst_sa, sizeof e->ldst_sa);
 	e->nsmp = nsmp; memcpy(e->smp_units, smp_units, sizeof smp_units);
@@ -1017,7 +1022,8 @@ static ShaderEntry *get_shader(uint32_t addr, const UsseProgram *prog, const Uss
 }
 
 /* ---------------------------------------------------------------- textures */
-typedef struct { uint32_t addr, format, width, height; int layout; int stale, bc; uint64_t used, checked_frame; SDL_GPUTexture *tex; SDL_GPUSampler *samp[4][2][3][3];
+typedef struct { uint32_t addr, format, width, height, palette; int layout; int stale, bc;   /* palette: a P4/P8 texture's (GfxTexture.palette): the same indices under another palette are another texture */
+ uint64_t used, checked_frame; SDL_GPUTexture *tex; SDL_GPUSampler *samp[4][2][3][3];
 	const void *view_src; uint64_t view_gen; int view_depth; SDL_GPUTextureFormat vfmt; int vfilt, vlinear;   /* a view (see target_view): built from this render target / depth entry at that generation; vfmt: its texture's format (RECOMP_GPU_VIEW_FAST's view_format), vfilt: linear-filtered; vlinear: of an sRGB target -- samples give decoded values, as the target itself does */
 	/* change detection (see get_texture): the guest bytes the decode reads, [addr, addr+span); a
 	 * content hash per host page of them; the guest write clock when the pages were last checked
@@ -1450,7 +1456,7 @@ static TexEntry *get_texture(const GfxTexture *t) {
 	n_tex_binds++;
 	TexEntry *e = 0;   /* one entry per (address, format, size): a layout change re-decodes it in place */
 	const unsigned key = tex_key(t);
-	#define TEX_MATCH(x) ((x)->addr == t->data && (x)->format == t->format && (x)->width == t->width && (x)->height == t->height)
+	#define TEX_MATCH(x) ((x)->addr == t->data && (x)->format == t->format && (x)->width == t->width && (x)->height == t->height && (x)->palette == t->palette)
 	{ int hint = tex_index[key] - 1; if (hint >= 0 && hint < ntextures && TEX_MATCH(&textures[hint])) e = &textures[hint]; }
 	if (!e) for (int i = 0; i < ntextures; i++) { TexEntry *x = &textures[i]; if (TEX_MATCH(x)) { e = x; tex_index[key] = (uint16_t)(i + 1); break; } }
 	#undef TEX_MATCH
@@ -1503,7 +1509,7 @@ static TexEntry *get_texture(const GfxTexture *t) {
 		 * and a hash of the whole span, as uploaded -- takes the new address instead: its GPU texture is already right. */
 		ch = hash_bytes(G(t->data), span); int lv = layout == 3 ? gfx_texture_cube_levels(t) : gfx_texture_levels(t);
 		for (int i = 1; i < ntextures && !moved; i++) { TexEntry *x = &textures[i];
-			if (x->tex && x->chash == ch && x->span == span && x->format == t->format && x->width == t->width && x->height == t->height && x->layout == layout && x->levels == lv) moved = x; }
+			if (x->tex && x->chash == ch && x->span == span && x->format == t->format && x->width == t->width && x->height == t->height && x->palette == t->palette && x->layout == layout && x->levels == lv) moved = x; }
 		if (moved) {
 			if (trace_sync()) fprintf(stderr, "gpu trace: texture %#x fmt %#x %ux%u u%#x: the same bytes as the one at %#x -- moved, not uploaded\n", t->data, t->format, t->width, t->height, t->u_mode, moved->addr);
 			e = moved; free(e->ph); e->ph = 0; e->addr = t->data; e->stale = 0; n_tex_moved++;
@@ -1524,7 +1530,7 @@ static TexEntry *get_texture(const GfxTexture *t) {
 			free(e->ph);
 		}
 		if (trace_sync()) fprintf(stderr, "gpu trace: texture %#x fmt %#x %ux%u u%#x uploaded: new\n", t->data, t->format, t->width, t->height, t->u_mode);
-		memset(e, 0, sizeof *e); e->addr = t->data; e->format = t->format; e->width = t->width; e->height = t->height; n_tex_new++;
+		memset(e, 0, sizeof *e); e->addr = t->data; e->format = t->format; e->width = t->width; e->height = t->height; e->palette = t->palette; n_tex_new++;
 	}
 	tex_index[key] = (uint16_t)(e - textures + 1);
 	e->span = span; e->nph = tex_pages(t->data, span); e->ph = calloc(e->nph ? e->nph : 1, sizeof *e->ph);

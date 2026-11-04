@@ -345,12 +345,16 @@ static void dec_vbw(uint64_t w, int sec, UOp *op) {
 }
 
 /* ---- SOP2 / SOP2M / SOP3 (§3.11): U8 RGBA blend-style sum of products ---- */
+/* The operands are whole RGBA words (four U8 channels packed in one register), read and written as one: typed U8
+ * they came back as their first byte -- read_i32 / write_raw_lane take a U8 operand's lane 0 -- so every blend saw
+ * green, blue and alpha as zero and stored only red. Persona 4: Dancing All Night's movies draw through an SOP2
+ * (source over the framebuffer by the source's alpha) and came out black */
 static void dec_sop2(uint64_t w, int sec, UOp *op) {
 	op->op = OP_SOP2;
 	set_pred_short(op, (int)BITS(w, 58, 57));
-	set_operand(&op->dst, bank_dst2((int)BITS(w, 33, 32), BIT(w, 51)), BITS(w, 27, 21), 7, 0, TY_U8, sec);
-	set_operand(&op->s1, bank_src12((int)BITS(w, 31, 30), BIT(w, 49)), BITS(w, 13, 7), 7, 0, TY_U8, sec);
-	set_operand(&op->s2, bank_src12((int)BITS(w, 29, 28), BIT(w, 48)), BITS(w, 6, 0), 7, 0, TY_U8, sec);
+	set_operand(&op->dst, bank_dst2((int)BITS(w, 33, 32), BIT(w, 51)), BITS(w, 27, 21), 7, 0, TY_U32, sec);
+	set_operand(&op->s1, bank_src12((int)BITS(w, 31, 30), BIT(w, 49)), BITS(w, 13, 7), 7, 0, TY_U32, sec);
+	set_operand(&op->s2, bank_src12((int)BITS(w, 29, 28), BIT(w, 48)), BITS(w, 6, 0), 7, 0, TY_U32, sec);
 	if (BIT(w, 20)) op->s1.negabs |= 1;   /* src1_mod: complement */
 	op->sub = (uint8_t)BITS(w, 19, 18);     /* cop */
 	op->sub2 = (uint8_t)BITS(w, 17, 16);    /* aop */
@@ -364,9 +368,9 @@ static void dec_sop2(uint64_t w, int sec, UOp *op) {
 static void dec_sop2m(uint64_t w, int sec, UOp *op) {
 	op->op = OP_SOP2M;
 	set_pred_short(op, (int)BITS(w, 58, 57));
-	set_operand(&op->dst, bank_dst2((int)BITS(w, 33, 32), BIT(w, 51)), BITS(w, 27, 21), 7, 0, TY_U8, sec);
-	set_operand(&op->s1, bank_src12((int)BITS(w, 31, 30), BIT(w, 49)), BITS(w, 13, 7), 7, 0, TY_U8, sec);
-	set_operand(&op->s2, bank_src12((int)BITS(w, 29, 28), BIT(w, 48)), BITS(w, 6, 0), 7, 0, TY_U8, sec);
+	set_operand(&op->dst, bank_dst2((int)BITS(w, 33, 32), BIT(w, 51)), BITS(w, 27, 21), 7, 0, TY_U32, sec);
+	set_operand(&op->s1, bank_src12((int)BITS(w, 31, 30), BIT(w, 49)), BITS(w, 13, 7), 7, 0, TY_U32, sec);
+	set_operand(&op->s2, bank_src12((int)BITS(w, 29, 28), BIT(w, 48)), BITS(w, 6, 0), 7, 0, TY_U32, sec);
 	op->sub = (uint8_t)BITS(w, 53, 52); op->sub2 = (uint8_t)BITS(w, 42, 41);
 	op->args[0] = (int32_t)BITS(w, 40, 38) | (BIT(w, 56) ? 0x100 : 0);
 	op->args[1] = (int32_t)BITS(w, 37, 35) | (BIT(w, 47) ? 0x100 : 0);
@@ -377,10 +381,10 @@ static void dec_sop2m(uint64_t w, int sec, UOp *op) {
 static void dec_sop3(uint64_t w, int sec, UOp *op) {
 	op->op = OP_SOP3;
 	set_pred_short(op, (int)BITS(w, 58, 57));
-	set_operand(&op->dst, bank_dst2((int)BITS(w, 33, 32), BIT(w, 51)), BITS(w, 27, 21), 7, 0, TY_U8, sec);
-	set_operand(&op->s0, bank_src0(BIT(w, 34), 0), BITS(w, 20, 14), 7, 0, TY_U8, sec);
-	set_operand(&op->s1, bank_src12((int)BITS(w, 31, 30), BIT(w, 49)), BITS(w, 13, 7), 7, 0, TY_U8, sec);
-	set_operand(&op->s2, bank_src12((int)BITS(w, 29, 28), BIT(w, 48)), BITS(w, 6, 0), 7, 0, TY_U8, sec);
+	set_operand(&op->dst, bank_dst2((int)BITS(w, 33, 32), BIT(w, 51)), BITS(w, 27, 21), 7, 0, TY_U32, sec);
+	set_operand(&op->s0, bank_src0(BIT(w, 34), 0), BITS(w, 20, 14), 7, 0, TY_U32, sec);
+	set_operand(&op->s1, bank_src12((int)BITS(w, 31, 30), BIT(w, 49)), BITS(w, 13, 7), 7, 0, TY_U32, sec);
+	set_operand(&op->s2, bank_src12((int)BITS(w, 29, 28), BIT(w, 48)), BITS(w, 6, 0), 7, 0, TY_U32, sec);
 	op->sub = (uint8_t)BITS(w, 53, 52); op->sub2 = (uint8_t)BITS(w, 42, 41);
 	op->args[0] = (int32_t)BITS(w, 40, 38) | (BIT(w, 56) ? 0x100 : 0);
 	op->args[1] = (int32_t)BITS(w, 37, 35) | (BIT(w, 47) ? 0x100 : 0);

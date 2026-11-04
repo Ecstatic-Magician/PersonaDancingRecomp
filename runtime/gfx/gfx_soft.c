@@ -753,7 +753,8 @@ static void apply_swizzle(uint32_t format, int ncomp, float o[4]) {
  * SWIZZLE4 ones), 0 for formats whose components are placed by the decode itself */
 static int swizzle_ncomp(uint32_t base) {
 	return base == 0x00000000u || base == 0x01000000u || base == 0x09000000u || base == 0x0a000000u || base == 0x0b000000u || base == 0x12000000u || base == 0x88000000u ? 1
-	     : base == 0x0c000000u || base == 0x0d000000u || base == 0x1b000000u || base == 0x02000000u || base == 0x04000000u || (base >= 0x85000000u && base <= 0x87000000u) ? 4
+	     : base == 0x0c000000u || base == 0x0d000000u || base == 0x1b000000u || base == 0x02000000u || base == 0x04000000u || (base >= 0x85000000u && base <= 0x87000000u)
+	       || base == 0x94000000u || base == 0x95000000u ? 4   /* P4 / P8: their palette entries are U8U8U8U8 */
 	     : base == 0x98000000u || base == 0x99000000u ? 3 : 0;
 }
 static float small_float(uint32_t v, int mbits);
@@ -775,6 +776,7 @@ static void block_dims(uint32_t base, int *bw, int *bh, int *bytes, int *minbloc
 	case 0x86000000u: case 0x87000000u: *bw = 4; *bh = 4; *bytes = 16; return;                 /* UBC2 / UBC3 */
 	case 0x90000000u: case 0x91000000u: *bw = 2; *bh = 2; *bytes = 6; return;                  /* YUV420P2 / P3: 12 bits a texel (yuv_texel) */
 	case 0x92000000u: *bw = 1; *bh = 1; *bytes = 2; return;                                     /* YUV422 */
+	case 0x94000000u: *bw = 2; *bh = 1; *bytes = 1; return;                                     /* P4: two indices a byte */
 	default: *bw = *bh = 1; *bytes = (int)tex_bytes_per_texel(base); if (!*bytes) *bytes = 4; return;
 	}
 }
@@ -918,7 +920,7 @@ static uint32_t tex_bytes_per_texel(uint32_t base) {
 	case 0x05000000u: case 0x09000000u: case 0x0a000000u: case 0x0b000000u: case 0x07000000u:
 	case 0x02000000u: case 0x04000000u: return 2;                                          /* U5U6U5/U16/S16/F16/U8U8/U4U4U4U4/U1U5U5U5 */
 	case 0x98000000u: case 0x99000000u: return 3;                                          /* U8U8U8 / S8S8S8: three bytes, no padding */
-	case 0x00000000u: return 1;                                                            /* U8 */
+	case 0x00000000u: case 0x95000000u: return 1;                                          /* U8 / P8 */
 	default: return 0;                                                                     /* block-compressed / PVRTC / unknown: no flat per-face stride */
 	}
 }
@@ -1093,6 +1095,12 @@ static void texel_raw(const GfxTexture *t, float u, float v, float out[4]) {
 	uint32_t base = t->format & 0xff000000u, at = t->data;
 	if (base == 0x0c000000u) {           /* U8U8U8U8, ABGR: bytes R G B A */
 		uint32_t p = RD32(at + 4 * texel_index(t, x, y));
+		out[0] = (p & 0xff) / 255.f; out[1] = ((p >> 8) & 0xff) / 255.f; out[2] = ((p >> 16) & 0xff) / 255.f; out[3] = (p >> 24) / 255.f;
+	} else if (base == 0x94000000u || base == 0x95000000u) {   /* P4 / P8: an index into the texture's palette of U8U8U8U8 entries (bytes
+		 * c0..c3, placed by the SWIZZLE4 mode as U8U8U8U8's are); P4 holds two indices a byte, the first texel in the low nibble.
+		 * Persona 4: Dancing All Night draws its UI panels from them: undecoded, they sampled as noise */
+		uint32_t i = texel_index(t, x, y), idx = base == 0x95000000u ? RD8(at + i) : (RD8(at + i / 2) >> (4 * (i & 1))) & 15;
+		uint32_t p = t->palette ? RD32(t->palette + 4 * idx) : 0;
 		out[0] = (p & 0xff) / 255.f; out[1] = ((p >> 8) & 0xff) / 255.f; out[2] = ((p >> 16) & 0xff) / 255.f; out[3] = (p >> 24) / 255.f;
 	} else if (base == 0x98000000u || base == 0x99000000u) {   /* U8U8U8 / S8S8S8: three bytes a texel (Killzone's colour-grading textures in its final composite:
 		 * undecoded, every texel came out as the fallback magenta and so did the whole frame) */

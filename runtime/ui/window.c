@@ -455,6 +455,7 @@ void *window_handle(void) { return win; }
  * by the sound card as on the hardware */
 static SDL_AudioStream *streams[8];
 static uint32_t afreq[8], achan[8];
+static int adev_bytes[8];   /* the device's own period in bytes of the port's format (what it takes from the stream at once) */
 static int nstreams;
 int audio_open(uint32_t freq, uint32_t channels, uint32_t samples) {
 	(void)samples;
@@ -465,8 +466,13 @@ int audio_open(uint32_t freq, uint32_t channels, uint32_t samples) {
 	 * game hears as "played" is close to what the speakers play (RECOMP_AUDIO_FRAMES overrides) */
 	if (!nstreams) SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, getenv("RECOMP_AUDIO_FRAMES") ? getenv("RECOMP_AUDIO_FRAMES") : "256");
 	SDL_AudioStream *s = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &want, 0, 0);
-	if (!s) return 0;
-	SDL_ResumeAudioStreamDevice(s);
+	if (!s) { fprintf(stderr, "    audio: no playback device (%s, driver %s): the game runs silent\n", SDL_GetError(), SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "none"); return 0; }
+	if (!SDL_ResumeAudioStreamDevice(s)) fprintf(stderr, "    audio: the device didn't start (%s)\n", SDL_GetError());
+	{ SDL_AudioDeviceID dev = SDL_GetAudioStreamDevice(s); SDL_AudioSpec have; int frames = 0;
+	  const char *name = SDL_GetAudioDeviceName(dev);
+	  if (SDL_GetAudioDeviceFormat(dev, &have, &frames) && have.freq > 0) adev_bytes[nstreams] = (int)((uint64_t)frames * freq / (uint32_t)have.freq) * (int)channels * 2;
+	  if (frames > 0) fprintf(stderr, "    audio: '%s' via %s, %d Hz %d ch, %d-frame buffer (port: %u Hz %u ch)\n", name ? name : "?", SDL_GetCurrentAudioDriver(), have.freq, have.channels, frames, freq, channels);
+	  else fprintf(stderr, "    audio: '%s' via %s (port: %u Hz %u ch)\n", name ? name : "?", SDL_GetCurrentAudioDriver(), freq, channels); }
 	streams[nstreams] = s; afreq[nstreams] = freq; achan[nstreams] = channels;
 	return ++nstreams;   /* 1-based handle; 0 means "failed to open" to callers */
 }
@@ -556,9 +562,15 @@ void audio_output(int dev, const void *buf, uint32_t bytes) {
 	 * a slow machine crackles. The pacing sleep gives the guest thread's run slot up (RECOMP_SCHED). */
 	static int depth = -1;
 	if (depth < 0) { depth = getenv("RECOMP_AUDIO_QUEUE") ? atoi(getenv("RECOMP_AUDIO_QUEUE")) : settings_int("audio_buffers", 1); if (depth < 1) depth = 1; if (depth > 4) depth = 4; }
-	if (SDL_GetAudioStreamQueued(s) > depth * (int)bytes + extra) {
+	/* ...and never less than the device's own period and one buffer more: the device takes a whole period from the
+	 * stream at once, and a queue paced shallower than that dipped under the delay at every take -- the top-up above
+	 * then wrote silence into the middle of the sound every period. Persona 4: Dancing All Night's 256-sample
+	 * buffers (5.3 ms) under Windows' 480-frame WASAPI period (10 ms): every sound came out chopped */
+	int keep = depth * (int)bytes;
+	if (keep < adev_bytes[dev - 1] + (int)bytes) keep = adev_bytes[dev - 1] + (int)bytes;
+	if (SDL_GetAudioStreamQueued(s) > keep + extra) {
 		int b = sched_block_begin();
-		while (SDL_GetAudioStreamQueued(s) > depth * (int)bytes + extra) SDL_Delay(1);
+		while (SDL_GetAudioStreamQueued(s) > keep + extra) SDL_Delay(1);
 		if (b) sched_block_end();
 	}
 }
