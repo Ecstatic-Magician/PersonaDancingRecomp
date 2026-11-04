@@ -180,6 +180,16 @@ int main(int argc, char **argv) {
 				       d.clip_mode, d.clip_xmin, d.clip_xmax, d.clip_ymin, d.clip_ymax, d.fp_disabled, d.polygon_mode, d.point_line_width);
 				continue;
 			}
+			if (getenv("RECOMP_REPLAY_TEX_SURVEY")) {   /* each texture's Vita3K hash (texpack.c), once per address and format; =<file>: marks the ones it lists */
+				static uint64_t *want; static int nwant = -1; static uint32_t seen[4096][2]; static int nseen;
+				if (nwant < 0) { nwant = 0; FILE *hf = fopen(getenv("RECOMP_REPLAY_TEX_SURVEY"), "r"); char ln[64];
+					if (hf) { while (fgets(ln, sizeof ln, hf)) { want = realloc(want, (size_t)(nwant + 1) * 8); want[nwant++] = strtoull(ln, 0, 16); } fclose(hf); } }
+				for (int u = 0; u < 16; u++) { const GfxTexture *tx = &d.tex[u]; if (!tx->data) continue;
+					int k = 0; for (; k < nseen && !(seen[k][0] == tx->data && seen[k][1] == tx->format); k++) {}
+					if (k < nseen || nseen >= 4096) continue; seen[nseen][0] = tx->data; seen[nseen][1] = tx->format; nseen++;
+					extern uint64_t texpack_hash(const GfxTexture *); uint64_t h = texpack_hash(tx); int hit = 0; for (int i = 0; i < nwant; i++) if (want[i] == h) hit = 1;
+					fprintf(stderr, "texsurvey: %016llX %s tex %#x fmt %#x %ux%u layout %d\n", (unsigned long long)h, hit ? "IN PACK" : "-", tx->data, tx->format, tx->width, tx->height, tx->u_mode >> 4); }
+			}
 			if (getenv("RECOMP_REPLAY_FB_SURVEY")) {   /* each FRAGCOLOR fragment program's usse_fragment_fb_blend class, with its draws */
 				static uint32_t sp[256], sn[256]; static int ns;
 				const UsseProgram *fp = usse_get(d.fprog); const UsseFragLayout *fl = fp ? usse_fragment_layout(fp) : 0;
