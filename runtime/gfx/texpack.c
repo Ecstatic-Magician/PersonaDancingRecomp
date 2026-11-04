@@ -8,7 +8,7 @@
  * byte for byte, since the guest memory hashed is the same.
  * RECOMP_TEXTURE_PACK=<folder>: the pack, searched at any depth (a pack sorted into a folder per character works). */
 #define XXH_INLINE_ALL
-#include "third_party/xxhash.h"
+#include "third_party/xxhash/xxhash.h"
 #include "texpack.h"
 #include "rt.h"
 #include <dirent.h>
