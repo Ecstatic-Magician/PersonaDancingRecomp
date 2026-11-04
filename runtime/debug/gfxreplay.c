@@ -106,9 +106,9 @@ int main(int argc, char **argv) {
 	for (;;) {
 		static uint8_t *scratch; static uint32_t scratch_cap;
 		char tag[4]; uint32_t len;
-		if (fread(tag, 1, 4, f) != 4 || fread(&len, 4, 1, f) != 1) { fprintf(stderr, "truncated capture\n"); return 1; }
+		if (fread(tag, 1, 4, f) != 4 || fread(&len, 4, 1, f) != 1) { fprintf(stderr, "truncated capture (after %d draws)\n", draws); break; }
 		if (len > cap) { cap = len; buf = realloc(buf, cap); }
-		if (len && fread(buf, 1, len, f) != len) { fprintf(stderr, "truncated capture\n"); return 1; }
+		if (len && fread(buf, 1, len, f) != len) { fprintf(stderr, "truncated capture (after %d draws)\n", draws); break; }
 		if (!memcmp(tag, "MEMP", 4)) {
 			uint32_t addr, raw; memcpy(&addr, buf, 4); memcpy(&raw, buf + 4, 4);
 			uLongf dl = raw;

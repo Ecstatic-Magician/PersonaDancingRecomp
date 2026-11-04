@@ -169,12 +169,28 @@ static void video_sync_draw(const GfxDraw *d) {
 		}
 	}
 }
+/* RECOMP_SKIP_ROUNDTRIP="fprog[,fprog...]": a game's "draw the frame small, stretch it back" filter left out. A draw with
+ * one of these fragment programs (the game's own downsample: an address in its module, the same every run) copies the
+ * scene's target S into a smaller one T; the next draw that samples T into S -- the stretch back, an ordinary copy
+ * program -- is skipped, so S keeps its full-resolution picture. Persona 4 Dancing's close-up blur on the Vita: the
+ * frame through 480x272 and back (0x81437564, then a plain textured quad), ringing every edge at a PC's render scale. */
+static int roundtrip_skip(const GfxDraw *d) {
+	static int n = -1; static uint32_t fp[8]; static uint32_t small, src;
+	if (n < 0) { n = 0; const char *e = getenv("RECOMP_SKIP_ROUNDTRIP"); for (const char *p = e; p && *p && n < 8; ) { char *q; unsigned long v = strtoul(p, &q, 16); if (q == p) break; fp[n++] = (uint32_t)v; p = *q == ',' ? q + 1 : q; } }
+	if (!n) return 0;
+	for (int i = 0; i < n; i++) if (d->fprog == fp[i]) { small = scene_target.data; src = d->tex[0].data; return 0; }
+	if (small && d->tex[0].data == small && scene_target.data == src) {
+		static int told; if (!told) { told = 1; fprintf(stderr, "    gfx: skipping the stretch back of %#x into %#x (RECOMP_SKIP_ROUNDTRIP)\n", small, src); }
+		small = 0; return 1;
+	}
+	return 0;
+}
 void gfx_draw(const GfxDraw *d) {
 	video_sync_draw(d);
 	int m = metrics_on(); uint64_t t0 = m ? now_us() : 0;
 	GfxDraw tmp;
 	if (gfx_prim_kind(d->prim) == GFX_PRIM_POINTS) point_draw_seen(d);
-	LOCKED(rc_on_draw(d); gfxcap_draw(d); gfxcov_draw(d); d = backend_draw(d, &tmp); if (gpu_backend()) gfx_gpu_draw(d); else gfx_soft_draw(d));
+	LOCKED(rc_on_draw(d); gfxcap_draw(d); gfxcov_draw(d); if (!roundtrip_skip(d)) { d = backend_draw(d, &tmp); if (gpu_backend()) gfx_gpu_draw(d); else gfx_soft_draw(d); });
 	if (m) { metrics_add_render(now_us() - t0); metrics_add_draw(); }
 }
 void gfx_sync_to_guest(void) { LOCKED(if (gpu_backend()) gfx_gpu_sync_all()); }
