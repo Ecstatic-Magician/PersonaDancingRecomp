@@ -1284,9 +1284,17 @@ static void tring_end(SDL_GPUCommandBuffer *cmd, uint32_t lo, uint32_t hi) {   /
 }
 static void upload_texture(TexEntry *e, const GfxTexture *t) {
 	int cube = ((t->u_mode >> 4) & 3) == 3, levels = cube ? gfx_texture_cube_levels(t) : gfx_texture_levels(t), layers = cube ? 6 : 1;
+	const int old_levels = e->levels;
 	e->chash = hash_bytes(G(t->data), e->span); e->levels = levels;   /* what the GPU texture holds (~10 us for 256 KB) */
 	int wide = tex_wide(t->format); uint32_t bpp = wide ? 16 : 4;
 	batch_retire(e->tex, "texture re-upload");   /* its own command buffer runs before the pending draws that sampled the old content */
+	/* the same address, format and size with another mip count (Persona 4 Dancing's costumes: each one loaded over the
+	 * last): the texture object was made with the old count, and a level past its end is no subresource at all (a crash
+	 * inside SDL_UploadToGPUTexture on Vulkan) -- a new object */
+	if (e->tex && old_levels != levels) {
+		static int told; if (told++ < 8) fprintf(stderr, "    gpu: texture %#x %ux%u fmt %#x: %d mip levels now (%d before): a new texture object\n", t->data, t->width, t->height, t->format, levels, old_levels);
+		SDL_ReleaseGPUTexture(gpu(), e->tex); e->tex = 0; e->bc = 0;
+	}
 	e->layout = (t->u_mode >> 4) & 3;
 	n_tex_uploads++;
 	SDL_GPUTextureFormat bc = tex_bc_format(t, cube);
