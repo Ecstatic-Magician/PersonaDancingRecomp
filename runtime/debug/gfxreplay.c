@@ -180,6 +180,13 @@ int main(int argc, char **argv) {
 				       d.clip_mode, d.clip_xmin, d.clip_xmax, d.clip_ymin, d.clip_ymax, d.fp_disabled, d.polygon_mode, d.point_line_width);
 				continue;
 			}
+			if (getenv("RECOMP_REPLAY_FB_SURVEY")) {   /* each FRAGCOLOR fragment program's usse_fragment_fb_blend class, with its draws */
+				static uint32_t sp[256], sn[256]; static int ns;
+				const UsseProgram *fp = usse_get(d.fprog); const UsseFragLayout *fl = fp ? usse_fragment_layout(fp) : 0;
+				if (fl && fl->frag_color_used) { int k = 0; for (; k < ns && sp[k] != d.fprog; k++) {}
+					if (k == ns && ns < 256) { sp[ns++] = d.fprog; fprintf(stderr, "survey: fprog %#x colour type %d target fmt %#x blend %d: class %d\n", d.fprog, fl->color_type, cur.format, d.blend.present, usse_fragment_fb_blend(fp)); }
+					if (k < 256) sn[k]++; }
+			}
 			if (getenv("RECOMP_REPLAY_INFO") && atol(getenv("RECOMP_REPLAY_INFO")) == draws + 1) {   /* what draw k's programs declare */
 				const UsseProgram *fp = usse_get(d.fprog);
 				const UsseFragLayout *fl = fp ? usse_fragment_layout(fp) : 0;

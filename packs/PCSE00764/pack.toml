@@ -7,9 +7,9 @@ SPLIT = 16
 MODULES = "libc libgxm_es4 libgpu_es4 libfios2"
 RUN_ENV = ""
 TEST_ENV = "RECOMP_GFX=soft RECOMP_SHADERS=interp RECOMP_CLOCK=fixed RECOMP_ADDCONT_NONE=1"   # no add-ons (a notice each at boot, ~1500 frames); the interpreter runs the real shaders (the fast path finds positions by name, and this game names them vertex.position)
-# a scripted run (frames:buttons, hex Vita masks: 4000 cross, 8 start): cross+start every 60 frames
-TEST_INPUT = "300-305:4008,360-365:4008,420-425:4008,480-485:4008,540-545:4008,600-605:4008,660-665:4008,720-725:4008,780-785:4008,840-845:4008,900-905:4008,960-965:4008,1020-1025:4008,1080-1085:4008,1140-1145:4008,1200-1205:4008,1260-1265:4008,1320-1325:4008,1380-1385:4008,1440-1445:4008,1500-1505:4008,1560-1565:4008,1620-1625:4008,1680-1685:4008,1740-1745:4008,1800-1805:4008,1860-1865:4008,1920-1925:4008,1980-1985:4008,2040-2045:4008,2100-2105:4008,2160-2165:4008,2220-2225:4008,2280-2285:4008,2340-2345:4008"
-TEST_FRAMES = 750
+# no input: the opening movie plays through (the logos, the movie from ~frame 450)
+TEST_INPUT = ""
+TEST_FRAMES = 2400
 
 # 1.01, the game with its update (the dump's ux0:patch eboot); 1.00 is the game as installed.
 [versions."1.01"]

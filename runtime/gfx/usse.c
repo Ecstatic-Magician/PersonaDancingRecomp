@@ -1827,11 +1827,81 @@ static void add_texfn(void *ctx, int unit, float u, float v, float w, float lod,
 	for (int k = 0; k < 4; k++) { h = add_rng(&h); out[k] = (float)(h & 0xffff) / 32768.0f; }
 }
 static int fb_log(void) { static int v = -1; if (v < 0) v = getenv("RECOMP_FB_BLEND_LOG") != 0; return v; }   /* RECOMP_FB_BLEND_LOG=1: each program's class, and what ruled the others out */
+/* The 8-bit colour's test (TY_U8: Persona 4 Dancing's stage effects and sprites, ~285 a frame, each blending
+ * itself through FRAGCOLOR with SOP2 into an RGBA8 target). Here everything lives in [0, 1] and saturates, on the
+ * Vita and in an UNORM blend unit alike, so the model is out = sat(K * colour + X) with K and X in [0, 1]: ADD
+ * (K = 1, the add saturating as ONE/ONE does) or LERP (one K on red, green and blue, X + K <= 1, so nothing
+ * saturates: ONE/ONE_MINUS_SRC_ALPHA). Colours tried: 0, 1 and five mixes, components distinct; to within the
+ * byte's rounding (the SOP2 rounds each product: 3/255). The rest as the float test: straight-line programs,
+ * random input sets, 8 of them needed. */
+static int fb_blend_u8(UsseProgram *p) {
+	const UsseFragLayout *fl = &p->fl;
+	for (int i = 0; i < p->nprim; i++) {
+		const UOp *op = &p->prim[i];
+		if (op->pred_kind || op->op == OP_BR || op->op == OP_KILL || op->op == OP_DEPTHF || op->op == OP_LDST || op->op == OP_UNSUPPORTED) { if (fb_log()) fprintf(stderr, "usse: fb blend %#x (u8): op %d at %d rules it out\n", p->addr, op->op, i); return USSE_FB_NONE; }
+	}
+	int sec_ok = 1; for (int i = 0; i < p->nsec; i++) if (p->sec[i].op == OP_LDST || p->sec[i].op == OP_UNSUPPORTED) sec_ok = 0;
+	enum { NC = 7 };
+	static const float C[NC][4] = { {0, 0, 0, 0}, {1, 1, 1, 1}, {0.2f, 0.45f, 0.7f, 0.35f}, {0.8f, 0.15f, 0.55f, 0.9f}, {0.5f, 0.6f, 0.1f, 0.05f}, {0.05f, 0.95f, 0.3f, 0.6f}, {0.65f, 0.3f, 0.9f, 0.2f} };
+	UsseTexRawFn raw_saved = g_texfn_raw; g_texfn_raw = 0;
+	int n = fl->color_comps > 0 ? fl->color_comps : 4;
+	const float tol = 3.0f / 255.0f;
+	int add = 1, lerp = 1, a_keep = 1, a_add = 1, a_repl = 1, a_over = 1, a_all = 1, valid = 0;
+	static UsseInst inst, tmpl; static UsseDraw d;
+	for (int t = 0; t < 32 && valid < 16 && (add || lerp); t++) {
+		uint32_t rs = 0x2545f491u * (uint32_t)(t + 1);
+		memset(&tmpl, 0, sizeof tmpl); memset(&d, 0, sizeof d);
+		for (int k = 0; k < 160; k++) tmpl.pa[k].u = (t & 1) ? add_rng(&rs) : add_word(&rs, 1);   /* raw bytes (packed colours) and positive floats, alternately */
+		for (int k = 0; k < 256; k++) d.sa[k].u = (t & 1) ? add_rng(&rs) : add_word(&rs, 1);
+		literals_load(p, &d);
+		if (sec_ok && p->nsec) { memset(&inst, 0, sizeof inst); usse_run_secondary(p, &inst, &d); }
+		AddTex tc = { add_rng(&rs) };
+		float out[NC][4];
+		for (int r = 0; r < NC; r++) { inst = tmpl; usse_preload_color(&inst, fl, C[r]); usse_run_primary(p, &inst, &d, &tc, add_texfn); usse_read_color(&inst, fl, out[r]); }
+		int fin = 1; for (int r = 0; r < NC; r++) for (int c = 0; c < n; c++) if (!isfinite(out[r][c])) fin = 0;
+		if (!fin) continue;
+		valid++;
+		float K[4], X[4];
+		for (int c = 0; c < n; c++) { X[c] = out[0][c]; K[c] = out[1][c] - X[c]; }
+		for (int c = 0; c < n; c++) {
+			int c_add = 1, c_lin = K[c] > -tol && K[c] < 1 + tol;
+			for (int r = 0; r < NC; r++) {
+				float x = C[r][c];
+				if (fabsf(out[r][c] - fminf(1.0f, X[c] + x)) > tol) c_add = 0;
+				if (fabsf(out[r][c] - (X[c] + K[c] * x)) > tol) c_lin = 0;
+			}
+			if (c < 3) {
+				if (!c_add) add = 0;
+				if (!c_lin || fabsf(K[c] - K[0]) > 2 * tol) lerp = 0;
+				if (fb_log() && !c_add && !c_lin) fprintf(stderr, "usse: fb blend %#x (u8): set %d comp %d: out %g %g %g %g for colours 0 1 a b\n", p->addr, t, c, out[0][c], out[1][c], out[2][c], out[3][c]);
+			} else {
+				int keep = 1, repl = fabsf(K[3]) <= tol, over = c_lin && fabsf(K[3] - K[0]) <= 2 * tol && fabsf(X[3] - (1 - K[0])) <= 2 * tol;
+				if (!(c_lin && fabsf(K[3] - K[0]) <= 2 * tol)) a_all = 0;
+				for (int r = 0; r < NC; r++) if (fabsf(out[r][3] - C[r][3]) > tol) keep = 0;
+				for (int r = 0; r < NC && repl; r++) if (fabsf(out[r][3] - X[3]) > tol) repl = 0;
+				if (!keep) a_keep = 0; if (!c_add) a_add = 0; if (!repl) a_repl = 0; if (!over) a_over = 0;
+				if (fb_log() && !keep && !c_add && !repl && !over) fprintf(stderr, "usse: fb blend %#x (u8): set %d alpha: out %g %g %g %g %g for colour alpha 0 1 %g %g %g; rgb K %g\n", p->addr, t, out[0][3], out[1][3], out[2][3], out[3][3], out[4][3], C[2][3], C[3][3], C[4][3], K[0]);
+			}
+		}
+	}
+	g_texfn_raw = raw_saved;
+	if (valid < 8) { if (fb_log()) fprintf(stderr, "usse: fb blend %#x (u8): %d input sets gave a colour\n", p->addr, valid); return USSE_FB_NONE; }
+	if (n < 4) a_keep = 1;
+	int cls = USSE_FB_NONE;
+	if (add && (a_keep || a_add)) cls = USSE_FB_ADD;
+	else if (add && a_repl) cls = USSE_FB_ADD_REPLACE;
+	else if (lerp && a_keep) cls = USSE_FB_LERP_KEEP;
+	else if (lerp && a_over) cls = USSE_FB_LERP_OVER;
+	else if (lerp && a_all && n >= 4) cls = USSE_FB_LERP_ALL;   /* (the usual SOP2 "src * a + dst * (1 - a)" on all four) */
+	if (fb_log()) fprintf(stderr, "usse: fb blend %#x (u8): class %d (add %d lerp %d; alpha keep %d add %d replace %d over %d all %d)\n", p->addr, cls, add, lerp, a_keep, a_add, a_repl, a_over, a_all);
+	return cls;
+}
 int usse_fragment_fb_blend(const UsseProgram *cp) {
 	UsseProgram *p = (UsseProgram *)cp;
 	if (p->additive) return p->additive - 1;
 	p->additive = 1;   /* (USSE_FB_NONE, cached as +1) */
 	const UsseFragLayout *fl = &p->fl;
+	if (p->is_fragment && p->supported && fl->frag_color_used && fl->color_type == TY_U8) { int c = fb_blend_u8(p); p->additive = (int8_t)(c + 1); return c; }
 	if (!p->is_fragment || !p->supported || !fl->frag_color_used || (fl->color_type != TY_F16 && fl->color_type != TY_F32)) return USSE_FB_NONE;
 	for (int i = 0; i < p->nprim; i++) {
 		const UOp *op = &p->prim[i];

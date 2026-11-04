@@ -153,7 +153,24 @@ static void point_draw_seen(const GfxDraw *d) {
 	if (n < 8) { n++; fprintf(stderr, "    gfx: frame %llu: point sprite draw, %u points, polygon mode %u, width %u, vprog %#x fprog %#x\n", (unsigned long long)presented, d->count, d->polygon_mode, d->point_line_width, d->vprog, d->fprog); }
 	if (cap == 1) { cap = 2; gfxcap_request(); fprintf(stderr, "capture requested (RECOMP_CAPTURE_ON_POINTS)\n"); }
 }
+/* RECOMP_VIDEO_SYNC_LOG=1: each presented frame's movie picture (a YUV texture a draw samples), by its address, with the
+ * guest clock -- media/video.c logs which decoded picture went to which address, ngs.c the movie voice's played samples */
+static void video_sync_draw(const GfxDraw *d) {
+	static int on = -1; if (on < 0) on = getenv("RECOMP_VIDEO_SYNC_LOG") != 0;
+	if (!on) return;
+	static uint32_t last; static uint64_t last_frame = ~0ull;
+	extern uint64_t display_frames(void); extern uint64_t guest_time_us_peek(void);
+	for (int u = 0; u < 16; u++) {
+		uint32_t b = d->tex[u].format >> 24;
+		if (d->tex[u].data && b >= 0x90 && b <= 0x92) {
+			uint64_t f = display_frames();
+			if (f != last_frame || d->tex[u].data != last) fprintf(stderr, "vsync: shown frame %llu t %.4f picture %#x\n", (unsigned long long)f, guest_time_us_peek() / 1e6, d->tex[u].data);
+			last = d->tex[u].data; last_frame = f; return;
+		}
+	}
+}
 void gfx_draw(const GfxDraw *d) {
+	video_sync_draw(d);
 	int m = metrics_on(); uint64_t t0 = m ? now_us() : 0;
 	GfxDraw tmp;
 	if (gfx_prim_kind(d->prim) == GFX_PRIM_POINTS) point_draw_seen(d);

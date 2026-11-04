@@ -1201,6 +1201,9 @@ static void h_voice_state(Cpu *c) {
 		 * stream's clock ran at half speed in every game that halves it back to frames: Uncharted's cutscene
 		 * sync (fn_815adf6c, voice types 3-5) then slowed the picture to that clock for its whole window and
 		 * left the dialogue running ahead of the lips by however long the window was */
+		{ static int on = -1; if (on < 0) on = getenv("RECOMP_VIDEO_SYNC_LOG") != 0;   /* (media/video.c, gfx_dispatch.c) */
+		  static uint64_t n; if (on && PCM_PLAYER(v->def) && v->playing && n++ % 16 == 0) { extern uint64_t guest_time_us_peek(void); uint32_t pp = v->params[0]; float fr; memcpy(&fr, G(pp + P_FREQ), 4);
+		    fprintf(stderr, "vsync: voice %d t %.4f samples %u (ch %d, %.0f Hz)\n", VIDX(v), guest_time_us_peek() / 1e6, v->samples_gen, (int8_t)RD8(pp + P_CHANNELS), fr); } }
 		WR32(A2, v->byte_pos); WR32(A2 + 4, v->buffer); WR32(A2 + 8, v->samples_gen);
 		WR32(A2 + 12, v->bytes_consumed); WR32(A2 + 16, v->samples_gen); WR32(A2 + 20, v->bytes_consumed);
 		if (v->def == DEF_SCREAM_AT9 && vo_log_on()) vo_state_log(v, c->r[14], vo_us());

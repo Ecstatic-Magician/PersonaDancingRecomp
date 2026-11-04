@@ -1762,6 +1762,42 @@ static void h_tls_addr(Cpu *c) {   /* the guest thread's, not the host thread's:
 	RET(A0 < 256 ? t->tls_keys + 4 * A0 : 0);
 }
 static void h_system_time_wide(Cpu *c) { uint64_t t = guest_time_us(); c->r[0] = (uint32_t)t; c->r[1] = (uint32_t)(t >> 32); }
+/* kernel timers (sceKernelCreateTimer & co.): a count of microseconds of guest time that runs while the timer is started.
+ * Stubbed, every read was 0 -- CRI Mana times its movies by one (Persona 4: Dancing All Night), and its pictures ran on
+ * their own pace against the music, which runs on the audio hardware's clock */
+typedef struct { uint32_t uid; int live, running; uint64_t base, since; } KTimer;
+static KTimer ktimers[64];
+static pthread_mutex_t ktimer_m = PTHREAD_MUTEX_INITIALIZER;
+static KTimer *ktimer_of(uint32_t uid) { uint32_t i = (uid - 0x40040001u) / 2; return i < 64 && ktimers[i].live && ktimers[i].uid == uid ? &ktimers[i] : 0; }
+static uint64_t ktimer_now(KTimer *t) { return t->base + (t->running ? guest_time_us() - t->since : 0); }
+static void h_timer_create(Cpu *c) {   /* (name, attr, opt) -> uid */
+	pthread_mutex_lock(&ktimer_m);
+	for (int i = 0; i < 64; i++) if (!ktimers[i].live) {
+		ktimers[i] = (KTimer){ .uid = 0x40040001u + 2u * (uint32_t)i, .live = 1 };
+		pthread_mutex_unlock(&ktimer_m); RET(ktimers[i].uid); return;
+	}
+	pthread_mutex_unlock(&ktimer_m); RET(0x80020190u);   /* SCE_KERNEL_ERROR_NO_MEMORY */
+}
+static void h_timer_delete(Cpu *c) { pthread_mutex_lock(&ktimer_m); KTimer *t = ktimer_of(A0); if (t) t->live = 0; pthread_mutex_unlock(&ktimer_m); RET(t ? 0 : 0x800201d6u); }   /* ILLEGAL_TIMER_ID */
+static void h_timer_start(Cpu *c) {   /* 0 started, 1 already running (as the console answers) */
+	pthread_mutex_lock(&ktimer_m); KTimer *t = ktimer_of(A0); int r = t ? t->running : 0;
+	if (t && !t->running) { t->since = guest_time_us(); t->running = 1; }
+	pthread_mutex_unlock(&ktimer_m); RET(t ? (uint32_t)r : 0x800201d6u);
+}
+static void h_timer_stop(Cpu *c) {   /* 0 stopped, 1 wasn't running */
+	pthread_mutex_lock(&ktimer_m); KTimer *t = ktimer_of(A0); int r = t ? !t->running : 0;
+	if (t && t->running) { t->base = ktimer_now(t); t->running = 0; }
+	pthread_mutex_unlock(&ktimer_m); RET(t ? (uint32_t)r : 0x800201d6u);
+}
+static void h_timer_time_wide(Cpu *c) {   /* (uid) -> SceUInt64 microseconds, in r0:r1 */
+	pthread_mutex_lock(&ktimer_m); KTimer *t = ktimer_of(A0); uint64_t v = t ? ktimer_now(t) : 0; pthread_mutex_unlock(&ktimer_m);
+	c->r[0] = (uint32_t)v; c->r[1] = (uint32_t)(v >> 32);
+}
+static void h_timer_set_wide(Cpu *c) {   /* (uid, SceUInt64 in r2:r3) -> the previous time */
+	pthread_mutex_lock(&ktimer_m); KTimer *t = ktimer_of(A0); uint64_t old = t ? ktimer_now(t) : 0;
+	if (t) { t->base = (uint64_t)c->r[3] << 32 | c->r[2]; t->since = guest_time_us(); }
+	pthread_mutex_unlock(&ktimer_m); c->r[0] = (uint32_t)old; c->r[1] = (uint32_t)(old >> 32);
+}
 
 /* the program's process parameters (mkimage.py's PPRM): older C libraries read their heap size
  * there; the standard streams are the console's TTYs, i.e. the host's */
@@ -1808,6 +1844,8 @@ const HleEntry hle_kernel[] = {
 	{"sceKernelRegisterThreadEventHandler", h_register_thread_event}, {"sceKernelUnregisterThreadEventHandler", h_unregister_thread_event},
 	{"sceKernelExitProcess", h_exit_process}, {"sceKernelCallModuleExit", h_exit_process}, {"sceKernelCallAbortHandler", h_abort_handler},
 	{"sceKernelGetTLSAddr", h_tls_addr}, {"__tls_get_addr", h_tls_get_addr}, {"sceKernelGetProcessParam", h_process_param}, {"sceKernelGetSystemTimeWide", h_system_time_wide},
+	{"sceKernelCreateTimer", h_timer_create}, {"sceKernelDeleteTimer", h_timer_delete}, {"sceKernelStartTimer", h_timer_start},
+	{"sceKernelStopTimer", h_timer_stop}, {"sceKernelGetTimerTimeWide", h_timer_time_wide}, {"sceKernelSetTimerTimeWide", h_timer_set_wide},
 	{"SceLibKernel_9F793F84", h_sdk_version}, {"sceKernelGetProcessTitleId", h_title_id}, {"sceKernelIsGameBudget", h_is_game_budget},
 	{"sceKernelGetStdin", h_stdin}, {"sceKernelGetStdout", h_stdout}, {"sceKernelGetStderr", h_stderr},
 	{"sceKernelCreateSema", h_create_sema}, {"sceKernelCreateSema_16XX", h_create_sema},

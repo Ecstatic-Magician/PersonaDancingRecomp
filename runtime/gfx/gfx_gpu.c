@@ -2131,12 +2131,12 @@ static void pipe_create_info(const GfxDraw *d, const ShaderEntry *vs, const Shad
 		bs.alpha_blend_op = conv_blendop(af);
 	}
 	if (fs->fzero) {   /* a FRAGCOLOR program's blend-unit variant (gfx_gpu_draw: no GXM blend of its own): the module outputs X (and 1 - K), the target supplies the colour it read */
-		int c = fs->fzero, lerp = c == USSE_FB_LERP_KEEP || c == USSE_FB_LERP_OVER;
+		int c = fs->fzero, lerp = c == USSE_FB_LERP_KEEP || c == USSE_FB_LERP_OVER || c == USSE_FB_LERP_ALL;
 		bs.enable_blend = true; bs.color_blend_op = bs.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
 		bs.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
 		bs.dst_color_blendfactor = lerp ? SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA : SDL_GPU_BLENDFACTOR_ONE;
-		bs.src_alpha_blendfactor = c == USSE_FB_LERP_KEEP ? SDL_GPU_BLENDFACTOR_ZERO : SDL_GPU_BLENDFACTOR_ONE;   /* keep: the source alpha is 1 - K, not the target's */
-		bs.dst_alpha_blendfactor = c == USSE_FB_ADD_REPLACE ? SDL_GPU_BLENDFACTOR_ZERO : c == USSE_FB_LERP_OVER ? SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA : SDL_GPU_BLENDFACTOR_ONE;
+		bs.src_alpha_blendfactor = c == USSE_FB_LERP_KEEP || c == USSE_FB_LERP_ALL ? SDL_GPU_BLENDFACTOR_ZERO : SDL_GPU_BLENDFACTOR_ONE;   /* keep: the source alpha is 1 - K, not the target's; all: K * target alpha here, X's alpha added by its second draw */
+		bs.dst_alpha_blendfactor = c == USSE_FB_ADD_REPLACE ? SDL_GPU_BLENDFACTOR_ZERO : c == USSE_FB_LERP_OVER || c == USSE_FB_LERP_ALL ? SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA : SDL_GPU_BLENDFACTOR_ONE;
 	}
 	/* SceGxmColorMask (A=1 R=2 G=4 B=8) -> SDL_GPUColorComponentFlags (R=1 G=2 B=4 A=8); forced to
 	 * nothing when the fragment program itself is disabled (depth/stencil still ran, above) */
@@ -5609,13 +5609,16 @@ void gfx_gpu_draw(const GfxDraw *d) {
 	 * target before the draw. A float target only (an 8-bit one clamps the source before blending, the Vita
 	 * clamps the result) and no GXM blend of the draw's own. The Vita rounds each result to the target's format
 	 * (U2F10F10F10's 5-bit mantissas), the blend unit keeps F16 between draws: a little more precise.
+	 * An 8-bit program (TY_U8) into an RGBA8 target too: both saturate, the Vita's SOP2s and the UNORM blend unit
+	 * (usse.c's fb_blend_u8 -- Persona 4 Dancing's ~285 FRAGCOLOR copies a frame on its stages).
 	 * RECOMP_GPU_NO_ADDITIVE=1: the copies. */
 	static int no_additive = -1; if (no_additive < 0) no_additive = getenv("RECOMP_GPU_NO_ADDITIVE") != 0;
-	g_fzero_draw = fl && fl->frag_color_used && fetch_mode() == 1 && !no_additive && (scene_entry->kind == TK_F16 || scene_entry->kind == TK_HDR10)
+	g_fzero_draw = fl && fl->frag_color_used && fetch_mode() == 1 && !no_additive && (fl->color_type == 0 /* TY_U8 */ ? scene_entry->kind == TK_U8 : (scene_entry->kind == TK_F16 || scene_entry->kind == TK_HDR10))
 	               && !(d->blend.present && (d->blend.color_func || d->blend.alpha_func)) ? usse_fragment_fb_blend(fp) : 0;
+	if (g_fzero_draw == USSE_FB_LERP_ALL && (d->stencil_fail || d->depth_fail || d->depth_pass)) g_fzero_draw = 0;   /* (its alpha's second draw re-tests depth EQUAL and must find the stencil unchanged) */
 	if (g_fzero_draw) {
 		static uint32_t told[64]; static int ntold; uint32_t h = usse_program_hash(fp); int seen = 0;
-		static const char *what[5] = { "", "adds to it: ONE/ONE", "adds to it, alpha replaced: ONE/ONE, alpha ONE/ZERO", "blends over it, alpha kept: ONE/ONE_MINUS_SRC_ALPHA", "blends over it: ONE/ONE_MINUS_SRC_ALPHA" };
+		static const char *what[6] = { "", "adds to it: ONE/ONE", "adds to it, alpha replaced: ONE/ONE, alpha ONE/ZERO", "blends over it, alpha kept: ONE/ONE_MINUS_SRC_ALPHA", "blends over it: ONE/ONE_MINUS_SRC_ALPHA", "blends over it, alpha too: ONE/ONE_MINUS_SRC_ALPHA, then its alpha added" };
 		for (int i = 0; i < ntold; i++) if (told[i] == h) seen = 1;
 		if (!seen && ntold < 64) { told[ntold++] = h; fprintf(stderr, "    gpu: fragment %#x reads the framebuffer and %s blending, no copy\n", d->fprog, what[g_fzero_draw]); }
 	}
@@ -6002,6 +6005,26 @@ void gfx_gpu_draw(const GfxDraw *d) {
 				else for (int i = 0; i < vs->nldst && i < 8; i++) { int w = vs->ldst_sa[i]; if (w >= 0 && w < 256) b->pvu.sa[w] = b->vu.sa[w]; }
 			}
 		} else b->mv = 0;
+	}
+	if (fs->fzero == USSE_FB_LERP_ALL && (!d->blend.present || (d->blend.mask & 1))) {
+		/* LERP_ALL's alpha: the draw above left K * the target's alpha (ZERO / ONE_MINUS_SRC_ALPHA, its alpha out 1 - K);
+		 * the same draw again adds X's alpha (the ADD variant outputs X; ONE / ONE), alpha only, no depth or stencil write,
+		 * depth EQUAL where the first wrote it. (Two triangles of one draw over a pixel: their alpha as K1 K2 a + X1 + X2
+		 * where the Vita has K2 (K1 a + X1) + X2 -- the copy path had its own form of that.) */
+		GfxDraw d2 = *d; d2.blend.present = 1; d2.blend.mask = 1; d2.blend.color_func = d2.blend.alpha_func = 0;
+		if (d2.depth_write) { d2.depth_write = 0; d2.depth_func = 2; }
+		g_fzero_draw = USSE_FB_ADD;
+		ShaderEntry *fs2 = get_shader(d->fprog, fp, vp, vl, fl, sa_for_smp, scene_entry->kind, cube_mask, snap_mask, 0, 0);
+		g_fzero_draw = 0;
+		if (fs2 && (shader_pending(fs2) || fs2->ok)) {
+			if (shader_pending(fs2) && !gpu_overlap()) build_wait(&fs2->pending);
+			PipeEntry *p2 = get_pipeline(&d2, vs, fs2, scene_target.depth != 0, scene_entry->kind, ds_depth_ok, ds_stencil_ok, cull_sdl, -1, 0);
+			if (p2 && pipeline_pending(p2) && !gpu_overlap()) build_wait(&p2->pending);
+			if (p2 && (pipeline_pending(p2) || p2->pipe)) {
+				int bi = (int)(b - batch.d); BatchDraw *b2 = batch_add(); b = &batch.d[bi];
+				*b2 = *b; b2->pipe = p2; b2->mv = 0; b2->qslot = -1;
+			}
+		}
 	}
 	if (d->vis_addr) vis_query_add(d, vs, scene_target.depth != 0, scene_entry->kind, ds_depth_ok, ds_stencil_ok, cull_sdl);
 	/* what the draw writes, as views and the guest-memory syncs see it: the colour target always;
