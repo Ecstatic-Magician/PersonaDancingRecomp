@@ -274,6 +274,15 @@ class Fn:
             e = {"rev": f"BSWAP({v})", "rev16": f"(((({v}) >> 8) & 0x00ff00ffu) | ((({v}) << 8) & 0xff00ff00u))",
                  "revsh": f"(uint32_t)(int16_t)((({v} & 0xff) << 8) | (({v} >> 8) & 0xff))"}[mn]
             out = [f"{self.dst(ops[0].reg)} = {e};"]
+        elif mn in ("uqsub8", "uqadd8", "uqsub16", "uqadd16"):   # ARMv6 parallel saturating, per lane (P3D's libc: its strlen/strcmp word loops)
+            a, b = self.r(ops[1].reg, i), self.r(ops[2].reg, i)
+            bits, n = (8, 4) if mn.endswith("8") else (16, 2)
+            m, lanes = (1 << bits) - 1, []
+            for k in range(n):
+                x, y = f"((({a}) >> {k * bits}) & 0x{m:x}u)", f"((({b}) >> {k * bits}) & 0x{m:x}u)"
+                e = f"({x} > {y} ? {x} - {y} : 0u)" if "sub" in mn else f"({x} + {y} > 0x{m:x}u ? 0x{m:x}u : {x} + {y})"
+                lanes.append(f"({e} << {k * bits})")
+            out = [f"{self.dst(ops[0].reg)} = {' | '.join(lanes)};"]
         elif mn in ("ldr", "ldrb", "ldrh", "ldrsb", "ldrsh", "str", "strb", "strh",
                     "ldrd", "strd", "ldrex", "strex", "ldrexd", "strexd", "ldrexb", "strexb", "ldrexh", "strexh"):
             out = self.mem(i, mn, ops)
