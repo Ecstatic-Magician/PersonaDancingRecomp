@@ -7,7 +7,7 @@ the renderer fixes these games need. Everything below the line is Project Nativ'
 | Game | Title ID | Status |
 |---|---|---|
 | Persona 4: Dancing All Night (US) | PCSE00764 | Playable: v0.9 |
-| Persona 3: Dancing in Moonlight | | Planned |
+| Persona 3: Dancing in Moonlight (US) | PCSE01274 | Playable, in testing |
 | Persona 5: Dancing in Starlight | | Planned |
 
 **Persona 4: Dancing All Night** is playable: the opening movie, menus and Free Dance, music in sync, the DLC songs and
@@ -27,6 +27,9 @@ Sony's firmware update file. **No game code, game data or firmware is in this re
 Please don't open issues asking for them.
 
 Setup for P4D, its options and notes are in [packs/PCSE00764/README.md](packs/PCSE00764/README.md).
+
+**Persona 3: Dancing in Moonlight** boots, plays its songs and DLC, and runs at the right speed at 60 fps in songs and
+menus (it's Atlus's own engine, as in Persona 5, where P4D's was Dingo's). Its pack is `packs/PCSE01274`.
 
 ### Credits
 
