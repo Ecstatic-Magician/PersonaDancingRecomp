@@ -4126,6 +4126,7 @@ static int sprite_quad(const GfxDraw *d) {
 		}
 		found = 1;
 	}
+	{ static int told; if (found && !told++) fprintf(stderr, "    gpu: sprite quads (vprog %#x): REPEAT sampled as CLAMP%s\n", d->vprog, getenv("RECOMP_GPU_SPRITE_NEAREST") ? ", point-sampled" : ""); }
 	return found;
 }
 static void bind_unit(const GfxTexture *tex, int unit, SDL_GPUTextureSamplerBinding *b, uint32_t *srgb_dec, uint32_t *srgb_enc, uint32_t *scaled_units, const char *stage, uint32_t prog, int slot) {
@@ -4159,7 +4160,11 @@ static void bind_unit(const GfxTexture *tex, int unit, SDL_GPUTextureSamplerBind
 	}
 	if (trace_sync() && tex) fprintf(stderr, "gpu trace: draw %u %s %#x slot %d unit %d tex %#x fmt %#x %ux%u u%#x -> %s%s\n", n_gpu_draws, stage, prog, slot, unit, tex->data, tex->format, tex->width, tex->height, tex->u_mode, src_target ? "target" : te && te->view_src ? "view" : te ? "texture" : "dummy", te && !te->view_src && tex_wide(tex->format) ? " (wide)" : "");
 	const int um = tex ? ((tex->u_mode & 15) == 0 && g_sprite_clamp ? 2 : tex->u_mode & 15) : 2, vm = tex ? ((tex->v_mode & 15) == 0 && g_sprite_clamp ? 2 : tex->v_mode & 15) : 2;   /* (sprite_quad) */
-	b->sampler = te ? tex_sampler(te, tex->min_filter, tex->mag_filter, um, vm, (int)GFX_TEX_MIP_LINEAR(tex->format))
+	/* RECOMP_GPU_SPRITE_NEAREST=1: a sprite quad's units point-sampled -- above 1x, the Vita's own 1x look exactly (each
+	 * texel a block): no filtering across a layer's edge, so a face's eye and mouth layers meet the face with no hairline */
+	static int sp_near = -1; if (sp_near < 0) sp_near = getenv("RECOMP_GPU_SPRITE_NEAREST") != 0;
+	const int mnf = tex && g_sprite_clamp && sp_near ? 0 : tex ? tex->min_filter : 0, mgf = tex && g_sprite_clamp && sp_near ? 0 : tex ? tex->mag_filter : 0;
+	b->sampler = te ? tex_sampler(te, mnf, mgf, um, vm, (int)GFX_TEX_MIP_LINEAR(tex->format))
 	                : tex_sampler(&textures[0], tex ? tex->min_filter : 0, tex ? tex->mag_filter : 0, tex ? (tex->u_mode & 15) : 2, tex ? (tex->v_mode & 15) : 2, tex ? (int)GFX_TEX_MIP_LINEAR(tex->format) : 0);
 }
 /* ---------------------------------------------------------------- the draw batch
