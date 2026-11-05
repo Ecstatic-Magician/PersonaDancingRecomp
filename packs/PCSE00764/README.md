@@ -26,6 +26,11 @@ vitarecomp run PCSE00764
   copies it to 480x272 (`0x81437564`, its own downsample program) and stretches it back over the frame; the stretch
   back is skipped, so the frame keeps its full resolution (`runtime/gfx/gfx_dispatch.c`). Unset it to have the blur.
 
+- `RECOMP_MOVIE_30=1`: 30 fps while a movie plays, so the anime cutscenes' subtitles keep time with the voices at the
+  60 fps setting (the event script that times them runs one step per update).
+- `RECOMP_GPU_SPRITE_NEAREST=1`: the 2D story scenes point-sampled. Above 1x, smoothing let a face's eye and mouth layers
+  show a hairline where they meet the portrait; point-sampled, each texel is a block, as the Vita's 1x scaled up.
+
 ## Optional
 
 - **Texture packs** made for Vita3K (`textures/import/PCSE00764/<hash>.dds|png`) work unchanged:
