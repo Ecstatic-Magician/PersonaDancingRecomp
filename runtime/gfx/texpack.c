@@ -4,8 +4,7 @@
  * width and height rounded up to the format's block; "used bytes": every byte of the level when its layout leaves no
  * padding, else only the pixels inside the texture (rows of a strided linear one; the used part of each tile of a
  * tiled one; the fully-used power-of-two blocks of an arbitrary-swizzled one, in memory order). A pack made by dumping
- * from Vita3K and editing (Persona 4 Dancing's "PS4 Character Textures": 738 costumes' worth of DXT1) matches here
- * byte for byte, since the guest memory hashed is the same.
+ * from Vita3K and editing matches here byte for byte, since the guest memory hashed is the same.
  * RECOMP_TEXTURE_PACK=<folder>: the pack, searched at any depth (a pack sorted into a folder per character works). */
 #define XXH_INLINE_ALL
 #include "third_party/xxhash/xxhash.h"

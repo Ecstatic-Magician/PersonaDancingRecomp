@@ -16,8 +16,7 @@ reports welcome.
 
 - **Sharper than the Vita:** the close-up blur (the Vita draws those shots at quarter resolution and stretches them back)
   is turned off by default.
-- **Texture packs:** packs made for Vita3K work unchanged, such as
-  [PS4 Character Textures](https://gamebanana.com/mods/605506) by AegisMoon (not included).
+- **Texture packs:** packs made for Vita3K work unchanged (none are included).
 - **DLC:** the add-ons you own, decrypted from your own dump.
 
 ### What you need

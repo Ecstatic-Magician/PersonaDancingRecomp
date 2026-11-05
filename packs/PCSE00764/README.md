@@ -34,8 +34,7 @@ vitarecomp run PCSE00764
 ## Optional
 
 - **Texture packs** made for Vita3K (`textures/import/PCSE00764/<hash>.dds|png`) work unchanged:
-  `RECOMP_TEXTURE_PACK=<folder>` (searched at any depth). Tested with "PS4 Character Textures" (GameBanana 605506),
-  whose 1024x1024 DXT1 costumes replace the Vita's 256x256 ones (`runtime/gfx/texpack.c`).
+  `RECOMP_TEXTURE_PACK=<folder>` (searched at any depth; `runtime/gfx/texpack.c`). None is included.
 - **60 fps:** the overlay's frame rate setting (or `RECOMP_FRAME_RATE=60`); the dances keep time with the music.
 - `P4D_CRI_LOG=1` at build time: the CRI middleware's error messages in the log (`hooks.c`).
 
