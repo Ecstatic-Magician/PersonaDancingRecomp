@@ -10,7 +10,8 @@ RUN_ENV = "RECOMP_PRESENT_MODE=vsync"
 # 60 fps: the game's frame rate (gfd's global +0x2c, 30 on the Vita; the PS4 build runs the same engine at 60) read
 # as 60 when the frame_rate setting is 60 -- its getter (0x81199484: the engine's fixed steps and timers, e.g. 0.01/fps)
 # and the present's swap interval (60 / fps at 0x811ee6d2). Without it every 1/30 s step ran each 1/60 s: double speed.
-IHOOKS = "0x8119948c:frames30 0x811ee6d2:frames30"
+# The menus keep their own 1/30 s steps (hooks.c p3d_step30, p3d_grid30): 1/60 s at 60 fps.
+IHOOKS = "0x8119948c:frames30 0x811ee6d2:frames30 0x81046f9a:p3d_grid30 0x81046fbe:p3d_step30 0x8112685a:p3d_step30 0x8103b6f0:p3d_step30"
 TEST_ENV = "RECOMP_GFX=soft RECOMP_SHADERS=interp RECOMP_CLOCK=fixed RECOMP_ADDCONT_NONE=1"
 TEST_INPUT = ""
 TEST_FRAMES = 2400
