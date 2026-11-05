@@ -4104,6 +4104,30 @@ static uint32_t snap_scale(uint32_t snap_mask) {   /* the block snap_fetch steps
 	for (int u = 0; u < 16 && pick < 0; u++) if (unit_sx[u]) pick = u;
 	return pick < 0 ? (uint32_t)rscale_x | (uint32_t)rscale << 16 : (uint32_t)unit_sx[pick] | (uint32_t)unit_sy[pick] << 16;
 }
+/* A single quad (at most six indices) whose float2 attributes all lie in [0, 1]: a sprite drawn with its whole texture
+ * once. Its REPEAT units are sampled CLAMPed: the same texels inside, but at a render scale above 1x the pixels along
+ * its edges sample between texel centres, and REPEAT blends in the texture's opposite edge there -- a hairline seam
+ * around every tile of a 2D scene (Persona 4 Dancing's story portraits: around each face's eyes and mouth, each its
+ * own 128x128 quad over the face, and through the tiled backgrounds). At 1x a pixel centre is a texel centre and the
+ * Vita never showed it. RECOMP_GPU_SPRITE_REPEAT=1: REPEAT as the game set it. */
+static int g_sprite_clamp;   /* this draw's (gfx_gpu_draw): bind_unit samples REPEAT as CLAMP */
+static int sprite_quad(const GfxDraw *d) {
+	static int off = -1; if (off < 0) off = getenv("RECOMP_GPU_SPRITE_REPEAT") != 0;
+	if (off || !d->count || d->count > 6 || !d->indices || !any_scaled()) return 0;
+	int found = 0;
+	for (int k = 0; k < d->nattr; k++) {
+		const GfxAttr *a = &d->attr[k];
+		if (a->format != 9 || a->comps != 2 || a->stream >= 16 || !d->stream[a->stream]) continue;   /* (F32 x2) */
+		for (uint32_t i = 0; i < d->count; i++) {
+			uint32_t ix = d->index_format ? RD32(d->indices + 4 * i) : RD16(d->indices + 2 * i);
+			uint32_t at = d->stream[a->stream] + ix * d->stride[a->stream] + a->offset, w0 = RD32(at), w1 = RD32(at + 4); float f0, f1;
+			memcpy(&f0, &w0, 4); memcpy(&f1, &w1, 4);
+			if (!(f0 >= -1e-4f && f0 <= 1.0001f && f1 >= -1e-4f && f1 <= 1.0001f)) return 0;
+		}
+		found = 1;
+	}
+	return found;
+}
 static void bind_unit(const GfxTexture *tex, int unit, SDL_GPUTextureSamplerBinding *b, uint32_t *srgb_dec, uint32_t *srgb_enc, uint32_t *scaled_units, const char *stage, uint32_t prog, int slot) {
 	/* render-to-texture: a texture over memory a GPU scene has rendered into (offscreen
 	 * then composite; or, as Unit 13 does, a surface read back in other formats and
@@ -4134,7 +4158,8 @@ static void bind_unit(const GfxTexture *tex, int unit, SDL_GPUTextureSamplerBind
 		if (!tg && st) *srgb_enc |= 1u << unit;
 	}
 	if (trace_sync() && tex) fprintf(stderr, "gpu trace: draw %u %s %#x slot %d unit %d tex %#x fmt %#x %ux%u u%#x -> %s%s\n", n_gpu_draws, stage, prog, slot, unit, tex->data, tex->format, tex->width, tex->height, tex->u_mode, src_target ? "target" : te && te->view_src ? "view" : te ? "texture" : "dummy", te && !te->view_src && tex_wide(tex->format) ? " (wide)" : "");
-	b->sampler = te ? tex_sampler(te, tex->min_filter, tex->mag_filter, tex->u_mode & 15, tex->v_mode & 15, (int)GFX_TEX_MIP_LINEAR(tex->format))
+	const int um = tex ? ((tex->u_mode & 15) == 0 && g_sprite_clamp ? 2 : tex->u_mode & 15) : 2, vm = tex ? ((tex->v_mode & 15) == 0 && g_sprite_clamp ? 2 : tex->v_mode & 15) : 2;   /* (sprite_quad) */
+	b->sampler = te ? tex_sampler(te, tex->min_filter, tex->mag_filter, um, vm, (int)GFX_TEX_MIP_LINEAR(tex->format))
 	                : tex_sampler(&textures[0], tex ? tex->min_filter : 0, tex ? tex->mag_filter : 0, tex ? (tex->u_mode & 15) : 2, tex ? (tex->v_mode & 15) : 2, tex ? (int)GFX_TEX_MIP_LINEAR(tex->format) : 0);
 }
 /* ---------------------------------------------------------------- the draw batch
@@ -6023,6 +6048,7 @@ void gfx_gpu_draw(const GfxDraw *d) {
 	uint32_t srgb_dec = 0, srgb_enc = 0;   /* UsseDrawUniforms.tex_srgb: units the shader decodes / re-encodes (usse_spirv.c srgb_fixup) */
 	memset(unit_sx, 0, sizeof unit_sx); memset(unit_sy, 0, sizeof unit_sy);
 	uint32_t scaled_units = 0;             /* tex_srgb word 2: units bound to a texture at the render scale (a view, the target itself) -- snap_fetch */
+	g_sprite_clamp = pipe->nsmp ? sprite_quad(d) : 0;
 	if (pipe->nsmp || pipe->fetch) {
 		for (int i = 0; i < pipe->nsmp; i++) {
 			int unit = pipe->smp_units[i];
@@ -6036,6 +6062,7 @@ void gfx_gpu_draw(const GfxDraw *d) {
 		}
 	}
 
+	g_sprite_clamp = 0;
 	SDL_GPUTextureSamplerBinding vtsb[16]; uint32_t v_srgb_dec = 0, v_srgb_enc = 0, v_scaled = 0;
 	for (int i = 0; i < vs->nsmp && i < 16; i++) {
 		int unit = vs->smp_units[i];
