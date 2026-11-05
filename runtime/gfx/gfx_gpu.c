@@ -1287,7 +1287,31 @@ static void tring_end(SDL_GPUCommandBuffer *cmd, uint32_t lo, uint32_t hi) {   /
  * a DDS (BC1/BC2/BC3/BC7, every level it carries) or a PNG (one level, RGBA8) as the GPU texture, at its own size -- the
  * shaders sample by normalized coordinates, so a 1024x1024 replacement of a 256x256 texture is simply sharper. Returns
  * 1 when e->tex now holds it. */
-static SDL_GPUTexture *texpack_upload(const char *path, int srgb, uint32_t *bytes_out) {
+/* whether a DXT1 level has any transparent texel: a block in its 3-colour mode (colour 0 <= colour 1) using index 3 */
+static int bc1_has_alpha(const uint8_t *p, size_t nblocks) {
+	for (size_t b = 0; b < nblocks; b++, p += 8) {
+		uint16_t c0 = (uint16_t)(p[0] | p[1] << 8), c1 = (uint16_t)(p[2] | p[3] << 8);
+		if (c0 > c1) continue;
+		uint32_t idx = (uint32_t)p[4] | (uint32_t)p[5] << 8 | (uint32_t)p[6] << 16 | (uint32_t)p[7] << 24;
+		for (int k = 0; k < 16; k++) if (((idx >> (2 * k)) & 3) == 3) return 1;
+	}
+	return 0;
+}
+/* whether the game's texture has transparent texels (its first level): a texture pack's replacement without any is
+ * refused for it -- Persona 4 Dancing's story portraits are layered, eyes and mouths drawn over the face with transparent
+ * edges, and the PS4 pack's opaque DXT1 versions of those layers boxed the faces */
+static int tex_has_alpha(const GfxTexture *t) {
+	const uint32_t base = t->format & 0x9f000000u, w = t->width, h = t->height; const uint8_t *d = (const uint8_t *)G(t->data);
+	const size_t nb = (size_t)((w + 3) / 4) * ((h + 3) / 4);
+	if (base == 0x85000000u) return bc1_has_alpha(d, nb);
+	if (base == 0x86000000u) { for (size_t b = 0; b < nb; b++) for (int k = 0; k < 8; k++) if (d[16 * b + k] != 0xff) return 1; return 0; }
+	if (base == 0x87000000u) { for (size_t b = 0; b < nb; b++) { const uint8_t *q = d + 16 * b; if (q[0] != 0xff || q[1] != 0xff) { if (q[0] != q[1] || (q[2] | q[3] | q[4] | q[5] | q[6] | q[7])) return 1; } } return 0; }
+	if ((base == 0x94000000u || base == 0x95000000u) && t->palette) { const uint8_t *pal = (const uint8_t *)G(t->palette); int n = base == 0x94000000u ? 16 : 256;
+		for (int i = 0; i < n; i++) if (pal[4 * i + 3] != 0xff) return 1; return 0; }
+	if (base == 0x0C000000u) { for (size_t i = 0; i < (size_t)w * h; i++) if (d[4 * i + 3] != 0xff) return 1; return 0; }
+	return base == 0x02000000u || base == 0x04000000u;   /* (4444 / 1555: not looked into) */
+}
+static SDL_GPUTexture *texpack_upload(const char *path, int srgb, int need_alpha, uint32_t *bytes_out) {
 	FILE *f = fopen(path, "rb"); if (!f) return 0;
 	fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
 	uint8_t *buf = n > 0 ? malloc((size_t)n) : 0;
@@ -1317,6 +1341,7 @@ static SDL_GPUTexture *texpack_upload(const char *path, int srgb, uint32_t *byte
 			uint32_t sz = ((lw + 3) / 4) * ((lh + 3) / 4) * blk; if (off + total + sz > (uint32_t)n) break; total += sz; lv++;
 		}
 		if (!lv) { free(buf); return 0; }
+		if (need_alpha && blk == 8 && !bc1_has_alpha(buf + off, (size_t)((w + 3) / 4) * ((h + 3) / 4))) { free(buf); return (SDL_GPUTexture *)-1; }   /* (opaque: refused, see tex_has_alpha) */
 		SDL_GPUTextureCreateInfo ci = { .type = SDL_GPU_TEXTURETYPE_2D, .format = fmt, .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER, .width = w, .height = h, .layer_count_or_depth = 1, .num_levels = lv, .sample_count = SDL_GPU_SAMPLECOUNT_1 };
 		tex = SDL_CreateGPUTexture(gpu(), &ci);
 		SDL_GPUTransferBufferCreateInfo xci = { .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = total };
@@ -1342,6 +1367,10 @@ static SDL_GPUTexture *texpack_upload(const char *path, int srgb, uint32_t *byte
 		SDL_Surface *sf = io ? SDL_LoadPNG_IO(io, true) : 0;
 		SDL_Surface *rgba = sf ? SDL_ConvertSurface(sf, SDL_PIXELFORMAT_ABGR8888) : 0;
 		if (sf) SDL_DestroySurface(sf);
+		if (rgba && need_alpha) {   /* (opaque: refused, see tex_has_alpha) */
+			int any = 0; for (int y = 0; y < rgba->h && !any; y++) { const uint8_t *row = (const uint8_t *)rgba->pixels + (size_t)rgba->pitch * y; for (int x = 0; x < rgba->w; x++) if (row[4 * x + 3] != 0xff) { any = 1; break; } }
+			if (!any) { SDL_DestroySurface(rgba); free(buf); return (SDL_GPUTexture *)-1; }
+		}
 		if (rgba) {
 			uint32_t w = (uint32_t)rgba->w, h = (uint32_t)rgba->h;
 			SDL_GPUTextureCreateInfo ci = { .type = SDL_GPU_TEXTURETYPE_2D, .format = srgb ? SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER, .width = w, .height = h, .layer_count_or_depth = 1, .num_levels = 1, .sample_count = SDL_GPU_SAMPLECOUNT_1 };
@@ -1383,14 +1412,18 @@ static void upload_texture(TexEntry *e, const GfxTexture *t) {
 	if (!cube && texpack_on()) {   /* a texture pack's replacement for these bytes (texpack.c) */
 		const uint64_t h = texpack_hash(t); const char *path = texpack_find(h);
 		if (path) {
-			uint32_t nb = 0; SDL_GPUTexture *rt = texpack_upload(path, GFX_TEX_GAMMA(t->format) != 0, &nb);
+			uint32_t nb = 0; SDL_GPUTexture *rt = texpack_upload(path, GFX_TEX_GAMMA(t->format) != 0, tex_has_alpha(t), &nb);
+			if (rt == (SDL_GPUTexture *)-1) {   /* the game's texture has transparency the replacement lacks: the game's own kept */
+				static int nref; if (nref++ < 16) fprintf(stderr, "    texpack: %016llX (texture %#x %ux%u fmt %#x) has transparent texels its replacement lacks: the game's own kept\n", (unsigned long long)h, t->data, t->width, t->height, t->format);
+				rt = 0; path = 0;
+			}
 			if (rt) {
 				if (e->tex) SDL_ReleaseGPUTexture(gpu(), e->tex);
 				e->tex = rt; e->rep = 1; e->bc = 0; e->layout = (t->u_mode >> 4) & 3; n_tex_uploads++;
 				static int told; if (told++ < 16) fprintf(stderr, "    texpack: %016llX (texture %#x %ux%u) -> %s\n", (unsigned long long)h, t->data, t->width, t->height, path);
 				return;
 			}
-			static int bad; if (bad++ < 8) fprintf(stderr, "    texpack: %s couldn't be loaded\n", path);
+			static int bad; if (path && bad++ < 8) fprintf(stderr, "    texpack: %s couldn't be loaded\n", path);
 		}
 	}
 	e->layout = (t->u_mode >> 4) & 3;
