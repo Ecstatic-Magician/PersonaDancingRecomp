@@ -1,5 +1,6 @@
 # Persona 3: Dancing in Moonlight (PCSE01274, US). Only facts about the game (the format: pipeline/packconf.py).
-# Started from Persona 4: Dancing All Night's pack (packs/PCSE00764): the same engine, two years on.
+# Started from Persona 4: Dancing All Night's pack (packs/PCSE00764). Another engine underneath: Atlus's own GFD, as in
+# Persona 5 (its threads say so: gfdThJob...), where P4D ran on one Dingo made; Persona 5: Dancing in Starlight shares it.
 NAME = "Persona 3: Dancing in Moonlight"
 REGION = "US"
 SPLIT = 16
