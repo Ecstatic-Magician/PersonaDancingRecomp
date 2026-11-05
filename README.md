@@ -8,7 +8,7 @@ the renderer fixes these games need. Everything below the line is Project Nativ'
 |---|---|---|
 | Persona 4: Dancing All Night (US) | PCSE00764 | Playable: v0.9 |
 | Persona 3: Dancing in Moonlight (US) | PCSE01274 | Playable, in testing |
-| Persona 5: Dancing in Starlight | | Planned |
+| Persona 5: Dancing in Starlight (US) | PCSE01275 | Playable, in testing |
 
 **Persona 4: Dancing All Night** is playable: the opening movie, menus and Free Dance, music in sync, the DLC songs and
 costumes, at 4x the Vita's resolution (up to 6x) and 30 or 60 fps. Story mode hasn't had a full playthrough yet:
@@ -29,7 +29,11 @@ Please don't open issues asking for them.
 Setup for P4D, its options and notes are in [packs/PCSE00764/README.md](packs/PCSE00764/README.md).
 
 **Persona 3: Dancing in Moonlight** boots, plays its songs and DLC, and runs at the right speed at 60 fps in songs and
-menus (it's Atlus's own engine, as in Persona 5, where P4D's was Dingo's). Its pack is `packs/PCSE01274`.
+menus (it's Atlus's own engine, as in Persona 5, where P4D's was Dingo's). Its pack is `packs/PCSE01274`; Vita3K texture
+packs work, such as the PS4 texture pack for P3D.
+
+**Persona 5: Dancing in Starlight** is built from the same code as P3D and plays the same way, 60 fps included. Its pack
+is `packs/PCSE01275`.
 
 ### Credits
 
