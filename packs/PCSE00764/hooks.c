@@ -22,19 +22,3 @@ static void cri_say(Cpu *c, int nargs) {
 void recomp_hook_p4d_cri_err(Cpu *c) { cri_say(c, 0); }
 void recomp_hook_p4d_cri_err1(Cpu *c) { cri_say(c, 1); }
 
-/* evtSubTitle.c's update (fn at 0x8103b4a0): the subtitle's frame count += 1 each update, against its length in frames
- * ([task+8]) and its fades (the draw's ratios): written for one update per 1/30 s. At 60 fps (the frame_rate setting)
- * a subtitle ran out in half its time, ahead of the anime cutscene's voices. Here, just after the +1 (r0 = the new
- * count; r4 the task): at 60 fps every other update of a task takes the +1 back, so the count still means 1/30 s.
- * RECOMP_P4D_SUBTITLE30=1: left alone. */
-extern int display_frame_rate_60(void);
-void recomp_ihook_p4d_subtitle_tick(Cpu *c, int reg) {
-	static int off = -1; if (off < 0) off = getenv("RECOMP_P4D_SUBTITLE30") != 0;
-	if (off || reg < 0 || reg > 14 || !display_frame_rate_60()) return;
-	static uint32_t task[16]; static uint8_t odd[16]; static int next;
-	uint32_t t = c->r[4]; int k = 0;
-	for (; k < 16 && task[k] != t; k++) {}
-	if (k == 16) { k = next; next = (next + 1) & 15; task[k] = t; odd[k] = 0; }
-	odd[k] ^= 1;
-	if (!odd[k]) c->r[reg] -= 1;   /* (the second of each pair of 1/60 s updates) */
-}

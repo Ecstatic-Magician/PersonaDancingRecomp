@@ -143,7 +143,9 @@ static int au_annexb(Dec *d, const uint8_t *p, uint32_t n) {
 
 static inline uint8_t clamp8(int v) { return v < 0 ? 0 : v > 255 ? 255 : (uint8_t)v; }
 /* a decoded picture into the caller's SceAvcdecPicture (size, SceAvcdecFrame at +4, SceAvcdecInfo at +0x44) */
+uint64_t video_last_picture_frame;   /* the presented frame (display_frames) when a movie picture was last decoded: display.c's RECOMP_MOVIE_30 */
 static void put_picture(Dec *d, uint32_t pic, const AVFrame *f) {
+	{ extern uint64_t display_frames(void); video_last_picture_frame = display_frames() + 1; }
 	uint32_t type = RD32(pic + 4), pitch = RD32(pic + 8), bufh = RD32(pic + 0x10), p0 = RD32(pic + 0x3c), p1 = RD32(pic + 0x40);
 	{ static int on = -1; if (on < 0) on = getenv("RECOMP_VIDEO_SYNC_LOG") != 0;
 	  if (on) { extern uint64_t guest_time_us_peek(void); fprintf(stderr, "vsync: decoded picture %llu t %.4f -> %#x\n", (unsigned long long)d->pics, guest_time_us_peek() / 1e6, p0); } }

@@ -1007,6 +1007,44 @@ void gfx_decode_texture_rgba8(const GfxTexture *t, uint8_t *out) {
 			for (int i = 0; i < 4; i++) p[i] = m[sw][i] < 0 ? 255 : c[m[sw][i]];
 		}
 		fast = 1;
+	} else if ((base == 0x94000000u || base == 0x95000000u) && !GFX_TEX_GAMMA(t->format)) {
+		/* P4 / P8: each index's palette entry, its bytes placed as U8U8U8U8's are (texel_raw, apply_swizzle). Persona 4
+		 * Dancing's UI panels: a 1024x512 P8 took 12 ms through texel(), redecoded whenever the game rewrote it */
+		static const int8_t m[8][4] = {{0, 1, 2, 3}, {2, 1, 0, 3}, {3, 2, 1, 0}, {1, 2, 3, 0}, {0, 1, 2, -1}, {2, 1, 0, -1}, {3, 2, 1, -1}, {1, 2, 3, -1}};
+		uint8_t pal[256][4]; int n = base == 0x95000000u ? 256 : 16;
+		for (int i = 0; i < n; i++) {
+			uint32_t v = t->palette ? RD32(t->palette + 4 * (uint32_t)i) : 0;
+			uint8_t c[4] = { (uint8_t)(v & 0xff), (uint8_t)((v >> 8) & 0xff), (uint8_t)((v >> 16) & 0xff), (uint8_t)(v >> 24) };
+			for (int k = 0; k < 4; k++) pal[i][k] = m[sw][k] < 0 ? 255 : c[m[sw][k]];
+		}
+		for (uint32_t y = 0; y < h; y++) for (uint32_t x = 0; x < w; x++) {
+			uint32_t i = texel_index(t, x, y), idx = base == 0x95000000u ? RD8(t->data + i) : (RD8(t->data + i / 2) >> (4 * (i & 1))) & 15;
+			memcpy(out + 4 * (y * w + x), pal[idx], 4);
+		}
+		fast = 1;
+	} else if (base == 0x90000000u || base == 0x91000000u) {
+		/* YUV420P2 / P3 (a movie's frames: CRI Mana's, every one re-uploaded): yuv_texel's arithmetic, its products from
+		 * tables (the same float operations in the same order: the same bytes), a row at a time. 960x544 took ~12 ms
+		 * through texel() -- over a 60 fps frame by itself */
+		const uint32_t st = (uint32_t)tex_stride(t), c = t->data + st * h; const int full = sw >= 2;
+		float ty[256], tr[256], tgu[256], tgv[256], tb[256];
+		for (int k = 0; k < 256; k++) {
+			float Y = full ? k / 255.f : (k - 16) * (1.f / 219.f), C = full ? (k - 128) / 255.f : (k - 128) * (1.f / 224.f);
+			ty[k] = Y; tr[k] = 1.402f * C; tgu[k] = 0.344136f * C; tgv[k] = 0.714136f * C; tb[k] = 1.772f * C;
+		}
+		for (uint32_t y = 0; y < h; y++) {
+			uint8_t *p = out + 4 * ((size_t)y * w);
+			for (uint32_t x = 0; x < w; x++, p += 4) {
+				int yy = RD8(t->data + y * st + x), a, b; uint32_t cx = x / 2, cy = y / 2;
+				if (base == 0x91000000u) { uint32_t cst = st / 2, plane = cst * ((h + 1) / 2); a = RD8(c + cy * cst + cx); b = RD8(c + plane + cy * cst + cx); }
+				else { a = RD8(c + cy * st + cx * 2); b = RD8(c + cy * st + cx * 2 + 1); }
+				int uu, vv; if (sw & 1) { uu = a; vv = b; } else { vv = a; uu = b; }
+				float r = ty[yy] + tr[vv], g = ty[yy] - tgu[uu] - tgv[vv], bl = ty[yy] + tb[uu];
+				r = r < 0 ? 0 : r > 1 ? 1 : r; g = g < 0 ? 0 : g > 1 ? 1 : g; bl = bl < 0 ? 0 : bl > 1 ? 1 : bl;
+				p[0] = (uint8_t)(r * 255.f + 0.5f); p[1] = (uint8_t)(g * 255.f + 0.5f); p[2] = (uint8_t)(bl * 255.f + 0.5f); p[3] = 255;
+			}
+		}
+		fast = 1;
 	} else if ((base == 0x80000000u || base == 0x81000000u || base == 0x82000000u || base == 0x83000000u) && !pvrtc_slow()) {
 		/* PVRTC / PVRTC-II: the whole level decoded cell by cell (pvrtc_decode_image, the software
 		 * renderer's own texcache decode) instead of texel by texel through texel() -> pvrtc_texel ->

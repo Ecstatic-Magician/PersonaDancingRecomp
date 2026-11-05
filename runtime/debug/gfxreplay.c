@@ -180,6 +180,16 @@ int main(int argc, char **argv) {
 				       d.clip_mode, d.clip_xmin, d.clip_xmax, d.clip_ymin, d.clip_ymax, d.fp_disabled, d.polygon_mode, d.point_line_width);
 				continue;
 			}
+			if (getenv("RECOMP_REPLAY_DECODE_TEST")) {   /* each texture through gfx_decode_texture_rgba8 once (RECOMP_GPU_DECODE_CHECK=1: against the generic path), timed */
+				static uint32_t seen[2048][2]; static int nseen;
+				for (int u = 0; u < 16; u++) { const GfxTexture *tx = &d.tex[u]; if (!tx->data || !tx->width) continue;
+					int k = 0; for (; k < nseen && !(seen[k][0] == tx->data && seen[k][1] == tx->format); k++) {}
+					if (k < nseen || nseen >= 2048) continue; seen[nseen][0] = tx->data; seen[nseen][1] = tx->format; nseen++;
+					uint8_t *o = malloc(4u * tx->width * tx->height); struct timespec a, b; clock_gettime(CLOCK_MONOTONIC, &a);
+					extern void gfx_decode_texture_rgba8(const GfxTexture *, uint8_t *); gfx_decode_texture_rgba8(tx, o);
+					clock_gettime(CLOCK_MONOTONIC, &b); free(o);
+					fprintf(stderr, "decodetest: tex %#x fmt %#x %ux%u %.2f ms\n", tx->data, tx->format, tx->width, tx->height, (b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6); }
+			}
 			if (getenv("RECOMP_REPLAY_TEX_SURVEY")) {   /* each texture's Vita3K hash (texpack.c), once per address and format; =<file>: marks the ones it lists */
 				static uint64_t *want; static int nwant = -1; static uint32_t seen[4096][2]; static int nseen;
 				if (nwant < 0) { nwant = 0; FILE *hf = fopen(getenv("RECOMP_REPLAY_TEX_SURVEY"), "r"); char ln[64];

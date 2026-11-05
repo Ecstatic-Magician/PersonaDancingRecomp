@@ -333,7 +333,13 @@ static int frame_rate_60(void) {
 	static long until = -2;
 	if (until == -2) { const char *e = getenv("RECOMP_FRAME_RATE_UNTIL"); until = e && *e ? atol(e) : -1; }
 	if (until >= 0) return frames < (uint64_t)until;
-	return (env >= 0 ? env : settings_int("frame_rate", 30)) >= 60;
+	int r60 = (env >= 0 ? env : settings_int("frame_rate", 30)) >= 60;
+	/* RECOMP_MOVIE_30=1 (a pack's): 30 fps while a movie plays (a picture decoded within the last 15 presented frames).
+	 * The movies are 30 fps themselves; what a game times to them in its own updates (Persona 4 Dancing's anime
+	 * cutscenes: their event-script subtitles, one script frame an update) keeps its time */
+	static int movie30 = -1; if (movie30 < 0) movie30 = getenv("RECOMP_MOVIE_30") != 0;
+	if (r60 && movie30) { extern uint64_t video_last_picture_frame; if (video_last_picture_frame && frames < video_last_picture_frame + 15) return 0; }
+	return r60;
 }
 int display_frame_rate_60(void) { return frame_rate_60(); }
 float display_frame_dt(void) { uint64_t e = __atomic_load_n(clock_fixed() ? &frame_edges_g : &frame_edges, __ATOMIC_RELAXED); return (float)(e < 1 ? 1 : e > 2 ? 2 : e) / 60.0f; }   /* 1/60..1/30 s (hooks.c: a game's fixed 1/30 steps at 60 fps) */
