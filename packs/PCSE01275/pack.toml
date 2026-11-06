@@ -4,7 +4,7 @@ NAME = "Persona 5: Dancing in Starlight"
 REGION = "US"
 SPLIT = 16
 MODULES = "libc libgxm_es4 libgpu_es4 libfios2"
-RUN_ENV = "RECOMP_PRESENT_MODE=vsync"
+RUN_ENV = "RECOMP_GAME_OPTIONS=texture_pack RECOMP_PRESENT_MODE=vsync"
 # 60 fps as in P3D's pack (its sites found here by their code): the frame rate's getter (0x8119d000) and the
 # present's swap interval (0x811f2246) read 60 at the 60 fps setting; the menus' own 1/30 s steps 1/60 s (hooks.c)
 IHOOKS = "0x8119d000:frames30 0x811f2246:frames30 0x81049a16:p5d_grid30 0x81049a3a:p5d_step30 0x811293fa:p5d_step30 0x8103e16c:p5d_step30"

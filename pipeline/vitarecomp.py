@@ -249,7 +249,7 @@ def cmd_add(T, rest):
     r = subprocess.run([PY, os.path.join(R, "packs.py"), "info", os.path.realpath(T)], env=env_with(TOOLS_ENV), capture_output=True, text=True)
     ident = r.stdout.split() if r.returncode == 0 and len(r.stdout.split()) >= 4 else ["game", "-", "-", "-"]
     kind, tid, cid = ident[0], ident[1], ident[3]
-    if kind == "addon": die(f"{tid}: {os.path.basename(T)} is an add-on: nothing to add -- the game gets every add-on it asks for (runtime/core/apputil.c)", 0)
+    if kind == "addon": cmd_add_addon(T, tid, cid, args, nobuild); return
     if kind == "firmware": cmd_firmware(T); return
     if kind not in ("game", "update"): die(f"{T}: a {kind}, not a game or its update")
     # no licence given and none in the copy: the player's kept licence for its content id (licenses.py; an update's is its
@@ -286,6 +286,31 @@ def cmd_add(T, rest):
     run(SELF + ["import", tid])
     if not os.path.isfile(os.path.join(PACKS, tid, "pack.toml")): die(f"{tid}: imported; there's no game pack for it yet (packs/{tid}/pack.toml)", 0)
     for c in ("analyze", "recompile", "build"): run(SELF + [c, tid])
+
+
+def addon_label(cid, path):   # an add-on's folder name under addcont0: its content id's label (ux0:addcont/<title>/<label>)
+    return cid[20:] if cid and cid != "-" and len(cid) > 20 else os.path.basename(os.path.normpath(path))
+
+
+def cmd_add_addon(T, tid, cid, args, nobuild):
+    """an add-on (ux0:addcont/<title>/<label>, or its PKG with the licence): decrypted to dump/decrypted/<title>/addcont0/<label>,
+    which import links in as the game's addcont0: -- songs, costumes and the like are files the game reads from there
+    (every add-on counts as licensed: runtime/core/apputil.c)"""
+    if not TITLE_RE.match(tid): die(f"{T}: an add-on with no title id")
+    label = addon_label(cid, T)
+    if not re.fullmatch(r"[\w.-]+", label): die(f"{T}: an add-on with no usable name ({label})")
+    if "--license" not in args and not os.path.isfile(os.path.join(T, "sce_sys", "package", "work.bin")):
+        k = subprocess.run([PY, os.path.join(R, "licenses.py"), "find", cid], env=env_with({"ATIV_DUMP": DUMP}), capture_output=True, text=True)
+        if k.returncode == 0 and k.stdout.strip(): args = args + ["--license", k.stdout.strip()]
+    W = os.path.join(DUMP, "decrypted", tid); A = os.path.join(W, "addcont0")
+    tmp = os.path.join(A, f".add.{os.getpid()}"); rmtree(tmp); os.makedirs(A, exist_ok=True)
+    if run([PY, "-m", "vitadecrypt.game", os.path.realpath(T), tmp] + args, env=env_with(TOOLS_ENV), check=False).returncode:
+        rmtree(tmp); die(f"{tid}: the add-on {label} didn't decrypt (see above)")
+    for junk in ("game.json",):   # (decrypt's own note, not the add-on's)
+        if os.path.isfile(os.path.join(tmp, junk)): os.remove(os.path.join(tmp, junk))
+    rmtree(os.path.join(A, label)); os.rename(tmp, os.path.join(A, label)); say(f"{tid}: add-on {label} decrypted -> {os.path.join(A, label)}")
+    if nobuild or not os.path.isdir(os.path.join(W, "app0")): return
+    run(SELF + ["import", tid])
 
 
 def _last_line(argv, env):   # `cmd | tail -1`
@@ -418,6 +443,11 @@ def cmd_import(g, src):
         run([PY, os.path.join(DECRYPT, "fself2elf.py"), src, os.path.join(W, "elf")])
         if os.path.isdir(os.path.join(src, "sce_module")): run([PY, os.path.join(DECRYPT, "fself2elf.py"), os.path.join(src, "sce_module"), os.path.join(W, "elf")])
         if os.path.isdir(os.path.join(src, "data")): shutil.copytree(os.path.join(src, "data"), os.path.join(app0, "data"), symlinks=True, dirs_exist_ok=True)
+    # the add-ons (add's addcont0/<label> folders): the game's addcont0:, linked in like app0
+    adc = os.path.join(OUT, "fs", "addcont0")
+    if os.path.isdir(os.path.join(W, "addcont0")) and (os.path.islink(adc) or _is_junction(adc) or not os.path.lexists(adc)):
+        link_dir(os.path.realpath(os.path.join(W, "addcont0")), adc)
+        say(f"{g.T}: add-ons: {len([d for d in os.listdir(adc) if not d.startswith('.')])}")
     # VERSIONS (packs/<title>/pack.toml): the builds the pack's hooks and addresses were made for -- another version or region
     # would mis-hook, so say so here rather than crash later; which one this is goes to $W/version, for the pack's per-version settings
     if g.VERSIONS:

@@ -234,7 +234,7 @@ def scan(root: str, packs: str, dumps: str, firmware: str, import_licences: bool
             except Exception as exc:   # a broken or foreign file: say so, keep scanning
                 print(f"{p}: {exc}", file=sys.stderr)
     def own_licence(kind: str, form: str, path: str) -> bool:
-        return form == "folder" and kind == "game" and os.path.isfile(os.path.join(path, "sce_sys", "package", "work.bin"))
+        return form == "folder" and kind in ("game", "addon") and os.path.isfile(os.path.join(path, "sce_sys", "package", "work.bin"))
     if import_licences:   # the player's own licences, kept: this search is their one import (a copied game folder's own too)
         own = [os.path.join(p, "sce_sys", "package", "work.bin") for _k, f, _t, _v, _n, p, _c in found if f == "folder"]
         res = LIC.import_paths(list(licences.values()) + [o for o in own if os.path.isfile(o)])
@@ -249,6 +249,9 @@ def scan(root: str, packs: str, dumps: str, firmware: str, import_licences: bool
             licence = "yes"
         else:
             status = _status(kind, title, version, packs, dumps)
+            if kind == "addon":   # (decrypted into the library's addcont0/<label>: vitarecomp add)
+                label = cid[20:] if cid and cid != "-" and len(cid) > 20 else os.path.basename(os.path.normpath(path))
+                status = "added" if os.path.isdir(os.path.join(dumps, title, "addcont0", label)) else "addon"
             if status == "nopack" and kind != "addon" and other_release(title, name, index):
                 status = "otherregion"
             has_lib_licence = os.path.isfile(os.path.join(dumps, title, "license.rif"))
@@ -338,7 +341,7 @@ def selftest() -> None:
         got = [(r[0], r[1], r[3], r[4], r[5]) for r in rows]
         want = [("firmware", "pup", "3.74", "installed", "yes"), ("game", "folder", "1.00", "supported", "yes"),
                 ("update", "folder", "1.01", "recommended", "game"), ("update", "pkg", "1.02", "unsupported", "game"),
-                ("addon", "folder", "", "licensed", "no")]
+                ("addon", "folder", "", "addon", "no")]
         assert got == want, got
         assert identity(os.path.join(tmp, "ux0", "patch", "PCSB00013"))[:3] == ("update", "PCSB00013", "1.01")
         # layering: the update's files over the game's, the rest hard links to the game's own

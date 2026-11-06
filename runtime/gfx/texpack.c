@@ -5,11 +5,12 @@
  * padding, else only the pixels inside the texture (rows of a strided linear one; the used part of each tile of a
  * tiled one; the fully-used power-of-two blocks of an arbitrary-swizzled one, in memory order). A pack made by dumping
  * from Vita3K and editing matches here byte for byte, since the guest memory hashed is the same.
- * RECOMP_TEXTURE_PACK=<folder>: the pack, searched at any depth (a pack sorted into a folder per character works). */
+ * RECOMP_TEXTURE_PACK=<folder>, else the game's own setting texture_pack: the pack, searched at any depth (a pack sorted into a folder per character works). */
 #define XXH_INLINE_ALL
 #include "third_party/xxhash/xxhash.h"
 #include "texpack.h"
 #include "rt.h"
+#include "settings.h"
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -139,7 +140,9 @@ static int cmp(const void *a, const void *b) {
 }
 int texpack_on(void) {
 	if (!state) {
+		static char own[1024];   /* (else the game's own setting, texture_pack: the launcher's Game settings) */
 		const char *dir = getenv("RECOMP_TEXTURE_PACK");
+		if (!dir || !*dir) dir = settings_str("texture_pack", "", own, sizeof own);
 		state = -1;
 		if (dir && *dir) {
 			scan(dir, 0);

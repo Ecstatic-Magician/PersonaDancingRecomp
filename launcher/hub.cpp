@@ -758,6 +758,8 @@ static void scan_load(const std::string &path) {
 		if (x.kind == "game" || x.kind == "update") {
 			bool dup = false; for (const Found &y : g_found) dup |= y.pick && y.kind == x.kind && y.id == x.id;
 			x.pick = !dup && playable_status(x.status);   /* (one still needing its licence is ticked, its field showing; it's added once it has one) */
+		} else if (x.kind == "addon") {
+			x.pick = x.status == "addon";
 		} else if (x.kind == "firmware" && x.status == "firmware" && !g_firmware) {
 			for (Found &y : g_found) if (y.kind == "firmware") y.pick = false;   /* (rows come sorted by version) */
 			x.pick = true;
@@ -769,7 +771,7 @@ static void scan_load(const std::string &path) {
 static bool found_ready(const Found &x) {   /* it has what adding it needs */
 	if (x.kind == "firmware") return true;
 	if (!kept_licence(x.content_id).empty()) return true;
-	if (x.licence == "rif" || (x.kind == "game" && x.licence == "no")) return !x.licence_file.empty();
+	if (x.licence == "rif" || ((x.kind == "game" || x.kind == "addon") && x.licence == "no")) return !x.licence_file.empty();
 	if (x.kind == "update" && x.licence == "no") {   /* it decrypts with its game's licence: the game is being added with one */
 		for (const Found &y : g_found) if (y.pick && y.kind == "game" && y.id == x.id && found_ready(y)) return true;
 		return false;
@@ -783,13 +785,16 @@ static std::vector<Step> found_steps(int *n, std::vector<std::string> *titles) {
 	for (const Found &x : g_found)
 		if (x.pick && x.kind == "firmware") { steps.push_back(step("Installing the firmware " + x.version, vitarecomp({"firmware", x.path}), ++group)); ++*n; break; }
 	std::vector<std::string> ids;
-	for (const Found &x : g_found) if (x.pick && (x.kind == "game" || x.kind == "update") && std::find(ids.begin(), ids.end(), x.id) == ids.end()) ids.push_back(x.id);
+	for (const Found &x : g_found) if (x.pick && (x.kind == "game" || x.kind == "update" || x.kind == "addon") && std::find(ids.begin(), ids.end(), x.id) == ids.end()) ids.push_back(x.id);
 	if (titles) *titles = ids;
 	for (const std::string &id : ids) {
-		std::vector<const Found *> items;
+		std::vector<const Found *> items, addons;
 		for (const char *k : {"game", "update"})
 			for (const Found &x : g_found) if (x.pick && x.id == id && x.kind == k && found_ready(x)) { items.push_back(&x); break; }
-		if (items.empty()) continue;
+		for (const Found &x : g_found) if (x.pick && x.id == id && x.kind == "addon" && found_ready(x)) addons.push_back(&x);
+		/* (add-ons alone: for a game already in the library, or coming with this add) */
+		const bool have_game = !items.empty() || exists(g_dump + "/decrypted/" + id + "/app0");
+		if (items.empty() && (addons.empty() || !have_game)) continue;
 		bool pack = false;
 		for (const Found &x : g_found) pack |= x.id == id && x.status != "nopack";
 		++group;
@@ -801,8 +806,16 @@ static std::vector<Step> found_steps(int *n, std::vector<std::string> *titles) {
 			steps.push_back(step(x.kind == "update" ? "Adding its update " + x.version : "Adding " + x.name + " " + x.version, argv, group));
 			++*n;
 		}
-		steps.push_back(step("Checking its version", vitarecomp({"import", id}), group));   /* (the game with its update layered over it) */
-		if (pack) build_steps(steps, id, group);
+		for (size_t i = 0; i < addons.size(); i++) {   /* each add-on decrypted into the library; import links them all in */
+			const Found &x = *addons[i];
+			std::vector<std::string> argv = vitarecomp({"add", x.path});
+			if (!x.licence_file.empty()) argv.insert(argv.end(), {"--license", x.licence_file});
+			argv.push_back("--no-build");
+			steps.push_back(step("Adding add-on " + std::to_string(i + 1) + " of " + std::to_string(addons.size()) + ": " + x.name, argv, group));
+			++*n;
+		}
+		steps.push_back(step("Checking its version", vitarecomp({"import", id}), group));   /* (the game with its update layered over it, its add-ons linked in) */
+		if (pack && !items.empty()) build_steps(steps, id, group);
 	}
 	return steps;
 }
@@ -813,6 +826,7 @@ static void found_status(const Found &x) {   /* what its game pack says of it, a
 		{"unsupported", "This version isn't supported yet", 1}, {"nopack", "No game pack yet: experimental", 1},
 		{"otherregion", "This region's release isn't supported yet", 1},
 		{"added", "Already in your library", 2}, {"licensed", "Nothing to add: the game gets its add-ons", 2},
+		{"addon", "Add-on: added beside its game", 0},
 		{"installed", "Already installed", 2}, {"firmware", "Not installed yet", 0}};
 	for (const S &e : st) if (x.status == e.key) {
 		ui::dot(e.tone == 0 ? ui::ready : e.tone == 1 ? ui::warn : ui::border);
@@ -831,10 +845,10 @@ static void found_list(void) {
 		Found &x = g_found[i];
 		ImGui::PushID((int)i);
 		if (i) ImGui::Separator();
-		bool can = x.kind == "game" || x.kind == "update" || (x.kind == "firmware" && x.status == "firmware");
+		bool can = x.kind == "game" || x.kind == "update" || (x.kind == "addon" && x.status == "addon") || (x.kind == "firmware" && x.status == "firmware");
 		ImGui::BeginDisabled(!can || g_task.running);
 		if (ImGui::Checkbox("##pick", &x.pick) && x.pick)   /* one copy of a game (or of its update) at a time */
-			for (Found &y : g_found) if (&y != &x && y.kind == x.kind && y.id == x.id && x.kind != "firmware") y.pick = false;
+			for (Found &y : g_found) if (&y != &x && y.kind == x.kind && y.id == x.id && x.kind != "firmware" && x.kind != "addon") y.pick = false;
 		ImGui::EndDisabled();
 		ImGui::SameLine();
 		ImGui::BeginGroup();
@@ -842,7 +856,7 @@ static void found_list(void) {
 		ImGui::TextUnformatted(x.name.c_str()); ImGui::SameLine();
 		ImGui::TextDisabled("%s%s%s%s", kind, x.version.empty() ? "" : " ", x.version.c_str(), x.form == "pkg" ? " (PKG)" : "");
 		found_status(x);
-		if (x.pick && (x.licence == "rif" || (x.kind == "game" && x.licence == "no")) && kept_licence(x.content_id).empty()) {
+		if (x.pick && (x.licence == "rif" || ((x.kind == "game" || x.kind == "addon") && x.licence == "no")) && kept_licence(x.content_id).empty()) {
 			ui::dot(ui::warn); ImGui::TextDisabled("Needs its licence file (.rif or work.bin).");
 			licence_help_link();
 			if (path_row("##licfile", x.licence_file, "Its licence file (.rif or work.bin)")) pick_file(nullptr, &x.licence_file, nullptr, 0);
@@ -851,7 +865,7 @@ static void found_list(void) {
 		}
 		ImGui::PushFont(nullptr, em * 0.85f); ImGui::PushStyleColor(ImGuiCol_Text, ui::muted);
 		ImGui::TextUnformatted(x.path.c_str());
-		if (!kept_licence(x.content_id).empty() && (x.kind == "game" || x.kind == "update")) ImGui::TextUnformatted("Licence: kept");
+		if (!kept_licence(x.content_id).empty() && x.kind != "firmware") ImGui::TextUnformatted("Licence: kept");
 		else if (x.licence == "file") ImGui::Text("Licence: %s", x.licence_file.c_str());
 		ImGui::PopStyleColor(); ImGui::PopFont();
 		ImGui::EndGroup();
@@ -878,7 +892,7 @@ static bool search_form(SDL_Window *win) {   /* a folder searched for games, upd
 	std::string label = n ? "Add " + std::to_string(n) + (n == 1 ? " item" : " items") : "Add";
 	bool started = ui::primary_button(label.c_str());
 	ImGui::EndDisabled();
-	int waiting = 0; for (const Found &x : g_found) waiting += x.pick && (x.kind == "game" || x.kind == "update") && !found_ready(x);
+	int waiting = 0; for (const Found &x : g_found) waiting += x.pick && x.kind != "firmware" && !found_ready(x);
 	if (waiting) { ImGui::SameLine(); ImGui::TextDisabled("%d waiting for a licence", waiting); }
 	if (started) {
 		task_start(n == 1 ? "Adding from the folder" : "Adding " + std::to_string(n) + " items", "add", "", steps);
@@ -962,7 +976,7 @@ static void ini_save(const Ini &x, const std::string &path, const char *header) 
 static const char *const SHARED_HEADER = "# Project Nativ's settings for every game (the launcher's Settings, and each game's menu; runtime/core/settings.h)";
 static const char *const GAME_HEADER = "# vitarecomp settings for this game: its own options, and where it differs from the shared settings (runtime/core/settings.h)";
 static bool game_key(const std::string &k) {   /* (settings.c's game_key: kept in the game's own file) */
-	for (const char *g : {"fov", "view_distance", "scenery_detail", "character_detail", "private_server", "net_redirect", "menu_hint_shown", "controller_layout"}) if (k == g) return true;
+	for (const char *g : {"fov", "view_distance", "scenery_detail", "character_detail", "private_server", "net_redirect", "menu_hint_shown", "controller_layout", "texture_pack"}) if (k == g) return true;
 	return false;
 }
 /* the shared keys' defaults where a game reads no value (runtime/core/settings.h; the consumers' own) */
@@ -1239,6 +1253,13 @@ static void game_settings_modal(void) {
 		if (game_option(*g, "view_distance")) { any = true; slider_row(t, "View distance", "How far fading scenery reaches. 1.00× is the game's own.", "view_distance", 1.0, 1.0f, 3.0f, "%.2f×"); }
 		if (game_option(*g, "scenery_detail")) { any = true; slider_row(t, "Scenery detail", "How far small scenery details stay visible. 1.00× is the game's own.", "scenery_detail", 1.0, 1.0f, 8.0f, "%.1f×"); }
 		if (game_option(*g, "character_detail")) { any = true; slider_row(t, "Character detail", "How far characters and props keep their full detail. 1.00× is the game's own.", "character_detail", 1.0, 1.0f, 8.0f, "%.1f×"); }
+		if (game_option(*g, "texture_pack")) {   /* (a folder of replacement textures in Vita3K's layout: runtime/gfx/texpack.c) */
+			any = true;
+			ui::row("Texture pack", "A folder of replacement textures made for Vita3K (its import folder for this game, or any folder holding its .dds and .png files). Empty: the game's own textures.");
+			static std::string tp; static std::string tp_for; if (tp_for != g->id) { tp = tget(t, "texture_pack", ""); tp_for = g->id; }
+			if (path_row("##texpack", tp, "Choose the texture pack's folder")) pick_folder(nullptr, &tp);
+			if (tp != tget(t, "texture_pack", "") && !ImGui::IsAnyItemActive()) target_write(t, "texture_pack", tp);
+		}
 		if (game_option(*g, "private_server")) {   /* (a game whose online needs its makers' servers: Killzone; Unit 13 needs none) */
 			any = true;
 			ui::row("Private server", "The community server that stands in for the game's own (host, or host:port). Empty: the game's own, long offline.");
